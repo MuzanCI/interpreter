@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process;
 
 use clap::Parser;
-use muzanci_interpreter::{EvalContext, evaluate};
+use muzanci_interpreter::{EvalContext, Interpreter};
 
 /// MuzanCI pipeline interpreter.
 ///
@@ -37,7 +37,8 @@ fn main() {
         git_commit: args.git_commit,
     };
 
-    match evaluate(&args.file, &ctx) {
+    let interpreter = Interpreter::new(ctx);
+    match interpreter.evaluate(&args.file) {
         Ok(result) => {
             let output = serde_json::json!({
                 "jobs": result.jobs,

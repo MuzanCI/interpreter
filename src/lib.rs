@@ -5,85 +5,32 @@ use std::path::Path;
 
 use allocative::Allocative;
 use anyhow::Context as _;
-use serde::{Deserialize, Serialize};
+use muzanci_transport::pipeline::{Job, JobId, Pipeline, PipelineId, Rule, Secret, Step};
 use starlark::any::ProvidesStaticType;
 use starlark::environment::{FrozenModule, Globals, GlobalsBuilder, Module};
 use starlark::eval::{Evaluator, ReturnFileLoader};
 use starlark::syntax::{AstModule, Dialect, DialectTypes};
-use starlark::values::list::{ListRef, UnpackList};
+use starlark::values::list::UnpackList;
 use starlark::values::{FrozenHeapName, NoSerialize, StarlarkValue, Value, none::NoneType};
 use starlark::{starlark_module, starlark_simple_value};
 use starlark_derive::starlark_value;
-use uuid::Uuid;
 
-// ── Pure Rust data records ────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecretRecord {
-    pub name: String,
-    pub key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StepRecord {
-    pub name: String,
-    pub command: String,
-    pub secrets: Vec<SecretRecord>,
-}
-
-/// A trigger rule.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum RuleRecord {
-    Push {
-        include_branches: Option<Vec<String>>,
-        exclude_branches: Option<Vec<String>>,
-        include_tags: Option<Vec<String>>,
-        exclude_tags: Option<Vec<String>>,
-        include_paths: Option<Vec<String>>,
-        exclude_paths: Option<Vec<String>>,
-    },
-    PullRequest {
-        include_branches: Option<Vec<String>>,
-        exclude_branches: Option<Vec<String>>,
-        include_paths: Option<Vec<String>>,
-        exclude_paths: Option<Vec<String>>,
-    },
-}
-
-pub type JobRecordId = Uuid;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobRecord {
-    pub job_id: JobRecordId,
-    pub name: String,
-    pub steps: Vec<StepRecord>,
-    pub depends_on: Vec<JobRecordId>,
-}
-
-pub type PipelineId = Uuid;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PipelineRecord {
-    pub pipeline_id: PipelineId,
-    pub name: String,
-    pub when: Vec<RuleRecord>,
-    pub targets: Vec<JobRecordId>,
-}
-
-// ── Collector (stored in eval.extra) ─────────────────────────────────────────
-
+/// A collector of all jobs and pipelines constructed during evaluation.
+/// This is used as the `extra` field of the Evaluator, so that the globals can
+/// push jobs and pipelines into it. `extra` is an immutable reference, so we
+/// use RefCell to allow interior mutability (borrowing is checked at runtime
+/// instead of compile time).
 #[derive(Debug, Default, ProvidesStaticType)]
 struct Collector {
-    jobs: RefCell<Vec<JobRecord>>,
-    pipelines: RefCell<Vec<PipelineRecord>>,
+    jobs: RefCell<Vec<Job>>,
+    pipelines: RefCell<Vec<Pipeline>>,
 }
 
-// ── Starlark value wrappers ───────────────────────────────────────────────────
-
+/// A Starlark value that wraps a [`Secret`].
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
-pub struct SecretVal {
+struct SecretVal {
     #[allocative(skip)]
-    pub inner: SecretRecord,
+    inner: Secret,
 }
 
 impl fmt::Display for SecretVal {
@@ -101,12 +48,11 @@ starlark_simple_value!(SecretVal);
 #[starlark_value(type = "Secret")]
 impl<'v> StarlarkValue<'v> for SecretVal {}
 
-// ─────────────────────────────────────────────────────────────────────────────
-
+/// A Starlark value that wraps a [`Step`].
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
-pub struct StepVal {
+struct StepVal {
     #[allocative(skip)]
-    pub inner: StepRecord,
+    inner: Step,
 }
 
 impl fmt::Display for StepVal {
@@ -120,12 +66,11 @@ starlark_simple_value!(StepVal);
 #[starlark_value(type = "Step")]
 impl<'v> StarlarkValue<'v> for StepVal {}
 
-// ─────────────────────────────────────────────────────────────────────────────
-
+/// A Starlark value that wraps a [`Job`].
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
-pub struct JobVal {
+struct JobVal {
     #[allocative(skip)]
-    pub inner: JobRecord,
+    inner: Job,
 }
 
 impl fmt::Display for JobVal {
@@ -143,12 +88,11 @@ starlark_simple_value!(JobVal);
 #[starlark_value(type = "Job")]
 impl<'v> StarlarkValue<'v> for JobVal {}
 
-// ─────────────────────────────────────────────────────────────────────────────
-
+/// A Starlark value that wraps a [`Rule`].
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
-pub struct RuleVal {
+struct RuleVal {
     #[allocative(skip)]
-    pub inner: RuleRecord,
+    inner: Rule,
 }
 
 impl fmt::Display for RuleVal {
@@ -162,26 +106,16 @@ starlark_simple_value!(RuleVal);
 #[starlark_value(type = "Rule")]
 impl<'v> StarlarkValue<'v> for RuleVal {}
 
-// ── UUID v7 helper ────────────────────────────────────────────────────────────
-
-#[inline]
-fn new_uuid_v7() -> Uuid {
-    Uuid::now_v7()
-}
-
-// ── Starlark globals module ───────────────────────────────────────────────────
-
-/// Convert an anyhow-style error message into a starlark::Error.
-#[inline]
-fn serr(e: impl Into<anyhow::Error>) -> starlark::Error {
-    starlark::Error::new_other(e)
-}
-
+/// A Starlark module that provides predefined primitives for defining
+/// pipeline configuration.
 #[starlark_module]
-fn muzanci_globals(builder: &mut GlobalsBuilder) {
-    fn Secret(name: &str, key: &str) -> starlark::Result<SecretVal> {
+fn predefined_primitives(builder: &mut GlobalsBuilder) {
+    fn Secret(
+        #[starlark(require = named)] name: &str,
+        #[starlark(require = named)] key: &str,
+    ) -> starlark::Result<SecretVal> {
         Ok(SecretVal {
-            inner: SecretRecord {
+            inner: Secret {
                 name: name.to_owned(),
                 key: key.to_owned(),
             },
@@ -189,16 +123,20 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
     }
 
     fn Step<'v>(
-        command: &str,
-        #[starlark(default = "")] name: &str,
-        #[starlark(default = NoneType)] secrets: Value<'v>,
+        #[starlark(require = named)] command: &str,
+        #[starlark(require = named)]
+        #[starlark(default = "")]
+        name: &str,
+        #[starlark(require = named)]
+        #[starlark(default = NoneType)]
+        secrets: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StepVal> {
-        let mut secrets_vec: Vec<SecretRecord> = Vec::new();
+        let mut secrets_vec: Vec<Secret> = Vec::new();
         if !secrets.is_none() {
             for item in secrets.iterate(eval.heap())? {
                 let s = SecretVal::from_value(item).ok_or_else(|| {
-                    serr(anyhow::anyhow!(
+                    starlark::Error::new_other(anyhow::anyhow!(
                         "Step.secrets: expected Secret, got {}",
                         item.get_type()
                     ))
@@ -208,7 +146,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
         }
         let name = if name.is_empty() { command } else { name };
         Ok(StepVal {
-            inner: StepRecord {
+            inner: Step {
                 name: name.to_owned(),
                 command: command.to_owned(),
                 secrets: secrets_vec,
@@ -217,15 +155,19 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
     }
 
     fn Job<'v>(
-        steps: Value<'v>,
-        #[starlark(default = "")] name: &str,
-        #[starlark(default = NoneType)] depends_on: Value<'v>,
+        #[starlark(require = named)] steps: Value<'v>,
+        #[starlark(require = named)]
+        #[starlark(default = "")]
+        name: &str,
+        #[starlark(require = named)]
+        #[starlark(default = NoneType)]
+        depends_on: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<JobVal> {
-        let mut steps_vec: Vec<StepRecord> = Vec::new();
+        let mut steps_vec: Vec<Step> = Vec::new();
         for item in steps.iterate(eval.heap())? {
             let s = StepVal::from_value(item).ok_or_else(|| {
-                serr(anyhow::anyhow!(
+                starlark::Error::new_other(anyhow::anyhow!(
                     "Job.steps: expected Step, got {}",
                     item.get_type()
                 ))
@@ -233,11 +175,11 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
             steps_vec.push(s.inner.clone());
         }
 
-        let mut deps: Vec<JobRecordId> = Vec::new();
+        let mut deps: Vec<JobId> = Vec::new();
         if !depends_on.is_none() {
             for item in depends_on.iterate(eval.heap())? {
                 let job = JobVal::from_value(item).ok_or_else(|| {
-                    serr(anyhow::anyhow!(
+                    starlark::Error::new_other(anyhow::anyhow!(
                         "Job.depends_on: expected Job, got {}",
                         item.get_type()
                     ))
@@ -246,7 +188,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
             }
         }
 
-        let job_id = uuid::Uuid::now_v7();
+        let job_id = JobId::now_v7();
 
         let name = if name.is_empty() {
             format!("job-{}", job_id)
@@ -254,7 +196,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
             name.to_owned()
         };
 
-        let record = JobRecord {
+        let job = Job {
             job_id,
             name,
             steps: steps_vec,
@@ -263,24 +205,30 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
 
         let collector = eval
             .extra
-            .ok_or_else(|| serr(anyhow::anyhow!("no Collector in eval.extra")))?
+            .ok_or_else(|| {
+                starlark::Error::new_other(anyhow::anyhow!("no Collector in eval.extra"))
+            })?
             .downcast_ref::<Collector>()
-            .ok_or_else(|| serr(anyhow::anyhow!("eval.extra is not a Collector")))?;
-        collector.jobs.borrow_mut().push(record.clone());
+            .ok_or_else(|| {
+                starlark::Error::new_other(anyhow::anyhow!("eval.extra is not a Collector"))
+            })?;
+        collector.jobs.borrow_mut().push(job.clone());
 
-        Ok(JobVal { inner: record })
+        Ok(JobVal { inner: job })
     }
 
+    /// A Starlark function to construct a Push object.
+    /// Returns a `Rule` Starlark value that can be used in a Pipeline's `when` list.
     fn Push<'v>(
-        include_branches: Option<UnpackList<String>>,
-        exclude_branches: Option<UnpackList<String>>,
-        include_tags: Option<UnpackList<String>>,
-        exclude_tags: Option<UnpackList<String>>,
-        include_paths: Option<UnpackList<String>>,
-        exclude_paths: Option<UnpackList<String>>,
+        #[starlark(require = named)] include_branches: Option<UnpackList<String>>,
+        #[starlark(require = named)] exclude_branches: Option<UnpackList<String>>,
+        #[starlark(require = named)] include_tags: Option<UnpackList<String>>,
+        #[starlark(require = named)] exclude_tags: Option<UnpackList<String>>,
+        #[starlark(require = named)] include_paths: Option<UnpackList<String>>,
+        #[starlark(require = named)] exclude_paths: Option<UnpackList<String>>,
     ) -> starlark::Result<RuleVal> {
         Ok(RuleVal {
-            inner: RuleRecord::Push {
+            inner: Rule::Push {
                 include_branches: include_branches.map(|l| l.items),
                 exclude_branches: exclude_branches.map(|l| l.items),
                 include_tags: include_tags.map(|l| l.items),
@@ -291,14 +239,16 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
         })
     }
 
+    /// A Starlark function to construct a PullRequest object.
+    /// Returns a `Rule` Starlark value that can be used in a Pipeline's `when` list.
     fn PullRequest<'v>(
-        include_branches: Option<UnpackList<String>>,
-        exclude_branches: Option<UnpackList<String>>,
-        include_paths: Option<UnpackList<String>>,
-        exclude_paths: Option<UnpackList<String>>,
+        #[starlark(require = named)] include_branches: Option<UnpackList<String>>,
+        #[starlark(require = named)] exclude_branches: Option<UnpackList<String>>,
+        #[starlark(require = named)] include_paths: Option<UnpackList<String>>,
+        #[starlark(require = named)] exclude_paths: Option<UnpackList<String>>,
     ) -> starlark::Result<RuleVal> {
         Ok(RuleVal {
-            inner: RuleRecord::PullRequest {
+            inner: Rule::PullRequest {
                 include_branches: include_branches.map(|l| l.items),
                 exclude_branches: exclude_branches.map(|l| l.items),
                 include_paths: include_paths.map(|l| l.items),
@@ -307,51 +257,51 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
         })
     }
 
-    /// Define a pipeline.
-    ///
-    /// `predicates` must be a list of zero-argument lambdas returning bool.
-    /// Example: `[lambda: GIT_BRANCH == "main"]`
-    ///
-    /// Each lambda is called immediately; both its repr() (pre-eval) and the
-    /// resulting bool (post-eval) are stored in PredicateRecord.
-    ///
-    /// `depends_on` is an optional list of job values; only their UUIDs are
-    /// stored in PipelineRecord.
-    ///
+    /// A Starlark function to construct a Pipeline object.
     /// Returns None — pipelines are tracked in the Collector, not returned.
     fn Pipeline<'v>(
-        name: &str,
-        #[starlark(default = NoneType)] when: Value<'v>,
-        #[starlark(default = NoneType)] targets: Value<'v>,
+        #[starlark(require = named)] name: &str,
+        #[starlark(require = named)]
+        #[starlark(default = NoneType)]
+        when: Value<'v>,
+        #[starlark(require = named)]
+        #[starlark(default = NoneType)]
+        targets: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let mut targets_vec: Vec<JobRecordId> = Vec::new();
-        if !targets.is_none() {
-            for item in targets.iterate(eval.heap())? {
-                let j = JobVal::from_value(item).ok_or_else(|| {
-                    serr(anyhow::anyhow!(
-                        "Pipeline.depends_on: expected Job, got {}",
-                        item.get_type()
-                    ))
-                })?;
-                targets_vec.push(j.inner.job_id);
+        let targets_vec = {
+            let mut targets_vec = Vec::new();
+            if !targets.is_none() {
+                for item in targets.iterate(eval.heap())? {
+                    let j = JobVal::from_value(item).ok_or_else(|| {
+                        starlark::Error::new_other(anyhow::anyhow!(
+                            "Pipeline.depends_on: expected Job, got {}",
+                            item.get_type()
+                        ))
+                    })?;
+                    targets_vec.push(j.inner.job_id);
+                }
             }
-        }
+            targets_vec
+        };
 
-        let mut rules_vec: Vec<RuleRecord> = Vec::new();
-        if !when.is_none() {
-            for item in when.iterate(eval.heap())? {
-                let r = RuleVal::from_value(item).ok_or_else(|| {
-                    serr(anyhow::anyhow!(
-                        "Pipeline.when: expected Rule, got {}",
-                        item.get_type()
-                    ))
-                })?;
-                rules_vec.push(r.inner.clone());
+        let rules_vec = {
+            let mut rules_vec: Vec<Rule> = Vec::new();
+            if !when.is_none() {
+                for item in when.iterate(eval.heap())? {
+                    let r = RuleVal::from_value(item).ok_or_else(|| {
+                        starlark::Error::new_other(anyhow::anyhow!(
+                            "Pipeline.when: expected Rule, got {}",
+                            item.get_type()
+                        ))
+                    })?;
+                    rules_vec.push(r.inner.clone());
+                }
             }
-        }
+            rules_vec
+        };
 
-        let pipeline_id = uuid::Uuid::now_v7();
+        let pipeline_id = PipelineId::now_v7();
 
         let name = if name.is_empty() {
             format!("pipeline-{}", pipeline_id)
@@ -359,7 +309,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
             name.to_owned()
         };
 
-        let record = PipelineRecord {
+        let pipeline = Pipeline {
             pipeline_id,
             name,
             when: rules_vec,
@@ -368,10 +318,14 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
 
         let collector = eval
             .extra
-            .ok_or_else(|| serr(anyhow::anyhow!("no Collector in eval.extra")))?
+            .ok_or_else(|| {
+                starlark::Error::new_other(anyhow::anyhow!("no Collector in eval.extra"))
+            })?
             .downcast_ref::<Collector>()
-            .ok_or_else(|| serr(anyhow::anyhow!("eval.extra is not a Collector")))?;
-        collector.pipelines.borrow_mut().push(record);
+            .ok_or_else(|| {
+                starlark::Error::new_other(anyhow::anyhow!("eval.extra is not a Collector"))
+            })?;
+        collector.pipelines.borrow_mut().push(pipeline.clone());
 
         Ok(NoneType)
     }
@@ -387,26 +341,45 @@ pub struct EvalContext {
     pub git_commit: String,
 }
 
-/// Output of evaluating a root muzan.star file.
+/// Output of evaluating a root Starlark file.
 #[derive(Debug, Clone)]
 pub struct EvalResult {
-    /// All jobs constructed during evaluation, in construction order.
-    pub jobs: Vec<JobRecord>,
-    /// All pipelines constructed during evaluation, in construction order.
-    pub pipelines: Vec<PipelineRecord>,
+    pub jobs: Vec<Job>,
+    pub pipelines: Vec<Pipeline>,
 }
 
-/// Build the Starlark Globals that include all MuzanCI builtins.
-pub fn make_globals() -> Globals {
-    GlobalsBuilder::standard().with(muzanci_globals).build()
+pub struct Interpreter {
+    eval_context: EvalContext,
+}
+
+impl Interpreter {
+    /// Constructs a new Interpreter with the given evaluation context.
+    pub fn new(eval_context: EvalContext) -> Self {
+        Self { eval_context }
+    }
+
+    /// Evaluate a root Starlark file and return all collected jobs and pipelines.
+    pub fn evaluate(&self, root: &Path) -> anyhow::Result<EvalResult> {
+        let globals = GlobalsBuilder::standard()
+            .with(predefined_primitives)
+            .build();
+        let collector = Collector::default();
+
+        evaluate_file(root, &globals, &self.eval_context, &collector)
+            .with_context(|| format!("evaluating {}", root.display()))?;
+
+        Ok(EvalResult {
+            jobs: collector.jobs.into_inner(),
+            pipelines: collector.pipelines.into_inner(),
+        })
+    }
 }
 
 /// Evaluate one Starlark file, recursively resolving its load() statements.
-///
-/// Each loaded module is frozen before being made available to its importer.
 /// Context globals (GIT_REPO, GIT_BRANCH, GIT_COMMIT) are injected into
 /// every module so that loaded helper modules can also reference them.
-fn eval_file(
+/// Each loaded module is frozen before being made available to its importer.
+fn evaluate_file(
     path: &Path,
     globals: &Globals,
     ctx: &EvalContext,
@@ -439,7 +412,7 @@ fn eval_file(
     let mut resolved: Vec<(String, FrozenModule)> = Vec::new();
     for id in &load_ids {
         let dep_path = base.join(id.as_str());
-        let frozen = eval_file(&dep_path, globals, ctx, collector)?;
+        let frozen = evaluate_file(&dep_path, globals, ctx, collector)?;
         resolved.push((id.clone(), frozen));
     }
 
@@ -468,18 +441,4 @@ fn eval_file(
     });
 
     result.map_err(|e| anyhow::anyhow!("{}", e))
-}
-
-/// Evaluate a root muzan.star file and return all collected jobs and pipelines.
-pub fn evaluate(root: &Path, ctx: &EvalContext) -> anyhow::Result<EvalResult> {
-    let globals = make_globals();
-    let collector = Collector::default();
-
-    eval_file(root, &globals, ctx, &collector)
-        .with_context(|| format!("evaluating {}", root.display()))?;
-
-    Ok(EvalResult {
-        jobs: collector.jobs.into_inner(),
-        pipelines: collector.pipelines.into_inner(),
-    })
 }

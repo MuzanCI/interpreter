@@ -12,7 +12,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 starlark = "0.14.2"
 starlark_derive = "0.14.2"
-uuid = { version = "1", features = ["v7", "serde"] }
+muzanci-transport = { path = "../muzanci-transport" }
 
 [lib]
 name = "muzanci_interpreter"
