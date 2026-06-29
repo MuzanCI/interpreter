@@ -92,6 +92,10 @@ test_job = Job(
     ],
 )
 
+no_name_job = Job(
+    steps=[],
+)
+
 load("external.py", "external_job")
 
 # pipeline() is called for its side effect: it registers the pipeline in the
@@ -99,14 +103,8 @@ load("external.py", "external_job")
 for arch in ["x86_64", "arm64"]:
     Pipeline(
         name=f"release_{arch}",
-        predicates=[lambda: GIT_BRANCH == "main"],
-        depends_on=[test_job, external_job],
+        when=[
+            Push(),
+        ],
+        targets=[test_job, external_job],
     )
-
-    # pipeline(
-    #     name=f"another_{arch}",
-    #     when=[
-    #         push(),
-    #     ],
-    #     depends_on=[test_job],
-    # )

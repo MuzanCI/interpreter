@@ -10,6 +10,7 @@ use starlark::any::ProvidesStaticType;
 use starlark::environment::{FrozenModule, Globals, GlobalsBuilder, Module};
 use starlark::eval::{Evaluator, ReturnFileLoader};
 use starlark::syntax::{AstModule, Dialect, DialectTypes};
+use starlark::values::list::{ListRef, UnpackList};
 use starlark::values::{FrozenHeapName, NoSerialize, StarlarkValue, Value, none::NoneType};
 use starlark::{starlark_module, starlark_simple_value};
 use starlark_derive::starlark_value;
@@ -30,34 +31,43 @@ pub struct StepRecord {
     pub secrets: Vec<SecretRecord>,
 }
 
-/// A predicate with its source representation and evaluated boolean value.
+/// A trigger rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PredicateRecord {
-    /// repr() of the predicate callable passed to pipeline().
-    pub src: String,
-    /// The result of calling the predicate lambda.
-    pub value: bool,
+pub enum RuleRecord {
+    Push {
+        include_branches: Option<Vec<String>>,
+        exclude_branches: Option<Vec<String>>,
+        include_tags: Option<Vec<String>>,
+        exclude_tags: Option<Vec<String>>,
+        include_paths: Option<Vec<String>>,
+        exclude_paths: Option<Vec<String>>,
+    },
+    PullRequest {
+        include_branches: Option<Vec<String>>,
+        exclude_branches: Option<Vec<String>>,
+        include_paths: Option<Vec<String>>,
+        exclude_paths: Option<Vec<String>>,
+    },
 }
 
 pub type JobRecordId = Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {
-    pub id: JobRecordId,
+    pub job_id: JobRecordId,
     pub name: String,
     pub steps: Vec<StepRecord>,
-    /// UUIDs of jobs this job depends on.
     pub depends_on: Vec<JobRecordId>,
 }
 
-pub type PipelineRecordId = Uuid;
+pub type PipelineId = Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineRecord {
-    pub id: PipelineRecordId,
+    pub pipeline_id: PipelineId,
     pub name: String,
-    pub predicates: Vec<PredicateRecord>,
-    pub depends_on: Vec<JobRecordId>,
+    pub when: Vec<RuleRecord>,
+    pub targets: Vec<JobRecordId>,
 }
 
 // ── Collector (stored in eval.extra) ─────────────────────────────────────────
@@ -120,7 +130,11 @@ pub struct JobVal {
 
 impl fmt::Display for JobVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Job(name={:?}, id={})", self.inner.name, self.inner.id)
+        write!(
+            f,
+            "Job(name={:?}, id={})",
+            self.inner.name, self.inner.job_id
+        )
     }
 }
 
@@ -128,6 +142,25 @@ starlark_simple_value!(JobVal);
 
 #[starlark_value(type = "Job")]
 impl<'v> StarlarkValue<'v> for JobVal {}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+pub struct RuleVal {
+    #[allocative(skip)]
+    pub inner: RuleRecord,
+}
+
+impl fmt::Display for RuleVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Rule({:?})", self.inner)
+    }
+}
+
+starlark_simple_value!(RuleVal);
+
+#[starlark_value(type = "Rule")]
+impl<'v> StarlarkValue<'v> for RuleVal {}
 
 // ── UUID v7 helper ────────────────────────────────────────────────────────────
 
@@ -156,8 +189,8 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
     }
 
     fn Step<'v>(
-        name: &str,
         command: &str,
+        #[starlark(default = "")] name: &str,
         #[starlark(default = NoneType)] secrets: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StepVal> {
@@ -173,6 +206,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
                 secrets_vec.push(s.inner.clone());
             }
         }
+        let name = if name.is_empty() { command } else { name };
         Ok(StepVal {
             inner: StepRecord {
                 name: name.to_owned(),
@@ -183,8 +217,8 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
     }
 
     fn Job<'v>(
-        name: &str,
         steps: Value<'v>,
+        #[starlark(default = "")] name: &str,
         #[starlark(default = NoneType)] depends_on: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<JobVal> {
@@ -199,25 +233,32 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
             steps_vec.push(s.inner.clone());
         }
 
-        let mut dep_uuids: Vec<Uuid> = Vec::new();
+        let mut deps: Vec<JobRecordId> = Vec::new();
         if !depends_on.is_none() {
             for item in depends_on.iterate(eval.heap())? {
-                let j = JobVal::from_value(item).ok_or_else(|| {
+                let job = JobVal::from_value(item).ok_or_else(|| {
                     serr(anyhow::anyhow!(
                         "Job.depends_on: expected Job, got {}",
                         item.get_type()
                     ))
                 })?;
-                dep_uuids.push(j.inner.id);
+                deps.push(job.inner.job_id);
             }
         }
 
-        let id = new_uuid_v7();
+        let job_id = uuid::Uuid::now_v7();
+
+        let name = if name.is_empty() {
+            format!("job-{}", job_id)
+        } else {
+            name.to_owned()
+        };
+
         let record = JobRecord {
-            id,
-            name: name.to_owned(),
+            job_id,
+            name,
             steps: steps_vec,
-            depends_on: dep_uuids,
+            depends_on: deps,
         };
 
         let collector = eval
@@ -228,6 +269,42 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
         collector.jobs.borrow_mut().push(record.clone());
 
         Ok(JobVal { inner: record })
+    }
+
+    fn Push<'v>(
+        include_branches: Option<UnpackList<String>>,
+        exclude_branches: Option<UnpackList<String>>,
+        include_tags: Option<UnpackList<String>>,
+        exclude_tags: Option<UnpackList<String>>,
+        include_paths: Option<UnpackList<String>>,
+        exclude_paths: Option<UnpackList<String>>,
+    ) -> starlark::Result<RuleVal> {
+        Ok(RuleVal {
+            inner: RuleRecord::Push {
+                include_branches: include_branches.map(|l| l.items),
+                exclude_branches: exclude_branches.map(|l| l.items),
+                include_tags: include_tags.map(|l| l.items),
+                exclude_tags: exclude_tags.map(|l| l.items),
+                include_paths: include_paths.map(|l| l.items),
+                exclude_paths: exclude_paths.map(|l| l.items),
+            },
+        })
+    }
+
+    fn PullRequest<'v>(
+        include_branches: Option<UnpackList<String>>,
+        exclude_branches: Option<UnpackList<String>>,
+        include_paths: Option<UnpackList<String>>,
+        exclude_paths: Option<UnpackList<String>>,
+    ) -> starlark::Result<RuleVal> {
+        Ok(RuleVal {
+            inner: RuleRecord::PullRequest {
+                include_branches: include_branches.map(|l| l.items),
+                exclude_branches: exclude_branches.map(|l| l.items),
+                include_paths: include_paths.map(|l| l.items),
+                exclude_paths: exclude_paths.map(|l| l.items),
+            },
+        })
     }
 
     /// Define a pipeline.
@@ -244,51 +321,49 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
     /// Returns None — pipelines are tracked in the Collector, not returned.
     fn Pipeline<'v>(
         name: &str,
-        predicates: Value<'v>,
-        #[starlark(default = NoneType)] depends_on: Value<'v>,
+        #[starlark(default = NoneType)] when: Value<'v>,
+        #[starlark(default = NoneType)] targets: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        // Collect predicate callables before calling eval_function so the
-        // iterate borrow on `predicates` is released.
-        let mut pred_callables: Vec<Value<'v>> = Vec::new();
-        if !predicates.is_none() {
-            for item in predicates.iterate(eval.heap())? {
-                pred_callables.push(item);
-            }
-        }
-
-        let mut dep_uuids: Vec<Uuid> = Vec::new();
-        if !depends_on.is_none() {
-            for item in depends_on.iterate(eval.heap())? {
+        let mut targets_vec: Vec<JobRecordId> = Vec::new();
+        if !targets.is_none() {
+            for item in targets.iterate(eval.heap())? {
                 let j = JobVal::from_value(item).ok_or_else(|| {
                     serr(anyhow::anyhow!(
                         "Pipeline.depends_on: expected Job, got {}",
                         item.get_type()
                     ))
                 })?;
-                dep_uuids.push(j.inner.id);
+                targets_vec.push(j.inner.job_id);
             }
         }
 
-        let mut pred_records: Vec<PredicateRecord> = Vec::new();
-        for pred in pred_callables {
-            let src = pred.to_repr();
-            let result = eval.eval_function(pred, &[], &[])?;
-            let value = result.unpack_bool().ok_or_else(|| {
-                serr(anyhow::anyhow!(
-                    "predicate must return bool, got {}",
-                    result.get_type()
-                ))
-            })?;
-            pred_records.push(PredicateRecord { src, value });
+        let mut rules_vec: Vec<RuleRecord> = Vec::new();
+        if !when.is_none() {
+            for item in when.iterate(eval.heap())? {
+                let r = RuleVal::from_value(item).ok_or_else(|| {
+                    serr(anyhow::anyhow!(
+                        "Pipeline.when: expected Rule, got {}",
+                        item.get_type()
+                    ))
+                })?;
+                rules_vec.push(r.inner.clone());
+            }
         }
 
-        let id = new_uuid_v7();
+        let pipeline_id = uuid::Uuid::now_v7();
+
+        let name = if name.is_empty() {
+            format!("pipeline-{}", pipeline_id)
+        } else {
+            name.to_owned()
+        };
+
         let record = PipelineRecord {
-            id,
-            name: name.to_owned(),
-            predicates: pred_records,
-            depends_on: dep_uuids,
+            pipeline_id,
+            name,
+            when: rules_vec,
+            targets: targets_vec,
         };
 
         let collector = eval
