@@ -46,6 +46,7 @@ pub struct JobRecord {
     pub id: JobRecordId,
     pub name: String,
     pub steps: Vec<StepRecord>,
+    /// UUIDs of jobs this job depends on.
     pub depends_on: Vec<JobRecordId>,
 }
 
@@ -79,7 +80,7 @@ impl fmt::Display for SecretVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "secret(name={:?}, key={:?})",
+            "Secret(name={:?}, key={:?})",
             self.inner.name, self.inner.key
         )
     }
@@ -87,7 +88,7 @@ impl fmt::Display for SecretVal {
 
 starlark_simple_value!(SecretVal);
 
-#[starlark_value(type = "secret")]
+#[starlark_value(type = "Secret")]
 impl<'v> StarlarkValue<'v> for SecretVal {}
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,13 +101,13 @@ pub struct StepVal {
 
 impl fmt::Display for StepVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "step(name={:?})", self.inner.name)
+        write!(f, "Step(name={:?})", self.inner.name)
     }
 }
 
 starlark_simple_value!(StepVal);
 
-#[starlark_value(type = "step")]
+#[starlark_value(type = "Step")]
 impl<'v> StarlarkValue<'v> for StepVal {}
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -119,13 +120,13 @@ pub struct JobVal {
 
 impl fmt::Display for JobVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "job(name={:?}, id={})", self.inner.name, self.inner.id)
+        write!(f, "Job(name={:?}, id={})", self.inner.name, self.inner.id)
     }
 }
 
 starlark_simple_value!(JobVal);
 
-#[starlark_value(type = "job")]
+#[starlark_value(type = "Job")]
 impl<'v> StarlarkValue<'v> for JobVal {}
 
 // ── UUID v7 helper ────────────────────────────────────────────────────────────
@@ -145,7 +146,7 @@ fn serr(e: impl Into<anyhow::Error>) -> starlark::Error {
 
 #[starlark_module]
 fn muzanci_globals(builder: &mut GlobalsBuilder) {
-    fn secret(name: &str, key: &str) -> starlark::Result<SecretVal> {
+    fn Secret(name: &str, key: &str) -> starlark::Result<SecretVal> {
         Ok(SecretVal {
             inner: SecretRecord {
                 name: name.to_owned(),
@@ -154,7 +155,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
         })
     }
 
-    fn step<'v>(
+    fn Step<'v>(
         name: &str,
         command: &str,
         #[starlark(default = NoneType)] secrets: Value<'v>,
@@ -165,7 +166,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
             for item in secrets.iterate(eval.heap())? {
                 let s = SecretVal::from_value(item).ok_or_else(|| {
                     serr(anyhow::anyhow!(
-                        "step secrets: expected secret, got {}",
+                        "Step.secrets: expected Secret, got {}",
                         item.get_type()
                     ))
                 })?;
@@ -181,7 +182,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
         })
     }
 
-    fn job<'v>(
+    fn Job<'v>(
         name: &str,
         steps: Value<'v>,
         #[starlark(default = NoneType)] depends_on: Value<'v>,
@@ -191,7 +192,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
         for item in steps.iterate(eval.heap())? {
             let s = StepVal::from_value(item).ok_or_else(|| {
                 serr(anyhow::anyhow!(
-                    "job steps: expected step, got {}",
+                    "Job.steps: expected Step, got {}",
                     item.get_type()
                 ))
             })?;
@@ -203,7 +204,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
             for item in depends_on.iterate(eval.heap())? {
                 let j = JobVal::from_value(item).ok_or_else(|| {
                     serr(anyhow::anyhow!(
-                        "job depends_on: expected job, got {}",
+                        "Job.depends_on: expected Job, got {}",
                         item.get_type()
                     ))
                 })?;
@@ -241,7 +242,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
     /// stored in PipelineRecord.
     ///
     /// Returns None — pipelines are tracked in the Collector, not returned.
-    fn pipeline<'v>(
+    fn Pipeline<'v>(
         name: &str,
         predicates: Value<'v>,
         #[starlark(default = NoneType)] depends_on: Value<'v>,
@@ -261,7 +262,7 @@ fn muzanci_globals(builder: &mut GlobalsBuilder) {
             for item in depends_on.iterate(eval.heap())? {
                 let j = JobVal::from_value(item).ok_or_else(|| {
                     serr(anyhow::anyhow!(
-                        "pipeline depends_on: expected job, got {}",
+                        "Pipeline.depends_on: expected Job, got {}",
                         item.get_type()
                     ))
                 })?;

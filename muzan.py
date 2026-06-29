@@ -10,14 +10,14 @@
 
 
 def checkout(repo, branch):
-    return step(
+    return Step(
         name="checkout {} {}".format(repo, branch),
         command="git checkout {} {}".format(repo, branch),
     )
 
 
 def upload(source, destination, secrets=[]):
-    return step(
+    return Step(
         name="upload {} {}".format(source, destination),
         command="aws s3 upload {} {}".format(source, destination),
         secrets=secrets,
@@ -25,7 +25,7 @@ def upload(source, destination, secrets=[]):
 
 
 def download(source, destination, secrets=[]):
-    return step(
+    return Step(
         name="download {} {}".format(source, destination),
         command="aws s3 download {} {}".format(source, destination),
         secrets=secrets,
@@ -34,7 +34,7 @@ def download(source, destination, secrets=[]):
 
 def attest(glob, oidc_issuer, secrets=[]):
     command = "attest {} {}".format(glob, oidc_issuer)
-    return step(
+    return Step(
         name=command,
         command=command,
         secrets=secrets,
@@ -45,19 +45,19 @@ def attest(glob, oidc_issuer, secrets=[]):
 # Pipeline definition
 # ------------------------------------------------------------------------------
 
-aws_secret = secret(
+aws_secret = Secret(
     name="aws_secret",
     key="AWS_SECRET_ACCESS_KEY",
 )
 
-build_job = job(
+build_job = Job(
     name="build_job",
     steps=[
         checkout(
             repo=GIT_REPO,  # injected by the interpreter
             branch=GIT_BRANCH,
         ),
-        step(
+        Step(
             name="build",
             command="cargo build --release",
         ),
@@ -73,7 +73,7 @@ build_job = job(
     ],
 )
 
-test_job = job(
+test_job = Job(
     name="test_job",
     depends_on=[build_job],
     steps=[
@@ -81,7 +81,7 @@ test_job = job(
             source="s3://my-bucket/{}/my_binary".format(GIT_COMMIT),
             destination="./my_binary",
         ),
-        step(
+        Step(
             name="test",
             command="./my_binary --test --output results.json",
         ),
@@ -97,8 +97,16 @@ load("external.py", "external_job")
 # pipeline() is called for its side effect: it registers the pipeline in the
 # interpreter's collector.  It does not need to be assigned to a variable.
 for arch in ["x86_64", "arm64"]:
-    pipeline(
+    Pipeline(
         name=f"release_{arch}",
         predicates=[lambda: GIT_BRANCH == "main"],
         depends_on=[test_job, external_job],
     )
+
+    # pipeline(
+    #     name=f"another_{arch}",
+    #     when=[
+    #         push(),
+    #     ],
+    #     depends_on=[test_job],
+    # )

@@ -1,4 +1,4 @@
-external_job = job(
+external_job = Job(
     name="external_job",
-    steps=[step(name="external_step", command="echo 'Hello from external job!'")],
+    steps=[Step(name="external_step", command="echo 'Hello from external job!'")],
 )

@@ -16,15 +16,15 @@ struct Args {
     file: PathBuf,
 
     /// Repository URL (injected as GIT_REPO).
-    #[arg(long, default_value = "")]
+    #[arg(long, default_value = "GIT_REPO")]
     git_repo: String,
 
     /// Branch name (injected as GIT_BRANCH).
-    #[arg(long, default_value = "")]
+    #[arg(long, default_value = "GIT_BRANCH")]
     git_branch: String,
 
     /// Commit SHA (injected as GIT_COMMIT).
-    #[arg(long, default_value = "")]
+    #[arg(long, default_value = "GIT_COMMIT")]
     git_commit: String,
 }
 
