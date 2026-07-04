@@ -1,21 +1,22 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::{JobDeps, JobId, Pipeline};
-
-/// A directed acyclic graph (DAG) of jobs and their dependencies.
-pub type PipelineDag = HashSet<JobId>;
+use crate::{JobGraph, JobId, Pipeline};
 
 /// A sequence of job IDs that form a cycle. The first and last job IDs are the same, indicating the start and end of the cycle.
 pub type Cycle = Vec<JobId>;
 
 /// Walk the job graph starting from each pipeline target, and collect all reachable jobs and edges.
 /// If a cycle is detected, return the cycle as a list of job IDs.
-pub fn walk_targets(pipeline: Pipeline, job_deps: JobDeps) -> Result<PipelineDag, Cycle> {
+pub fn walk_targets(
+    pipeline: Pipeline,
+    job_deps: JobGraph,
+) -> Result<(HashSet<JobId>, JobGraph), Cycle> {
     let mut visited = HashSet::new();
     let mut path_set = HashSet::new();
     let mut path_vec = Vec::new();
 
     let mut reachable_jobs = HashSet::new();
+    let mut reachable_job_deps: JobGraph = HashMap::new();
 
     pipeline.targets.into_iter().try_for_each(|target| {
         dfs(
@@ -25,22 +26,24 @@ pub fn walk_targets(pipeline: Pipeline, job_deps: JobDeps) -> Result<PipelineDag
             &mut path_set,
             &mut path_vec,
             &mut reachable_jobs,
+            &mut reachable_job_deps,
         )?;
 
         Ok::<(), Cycle>(())
     })?;
 
-    Ok(reachable_jobs)
+    Ok((reachable_jobs, reachable_job_deps))
 }
 
 /// Helper recursive DFS function to traverse the graph and detect cycles.
 fn dfs(
     node: JobId,
-    graph: &JobDeps,
+    graph: &JobGraph,
     visited: &mut HashSet<JobId>,
     path_set: &mut HashSet<JobId>,
     path_vec: &mut Vec<JobId>,
     reachable_jobs: &mut HashSet<JobId>,
+    reachable_job_deps: &mut JobGraph,
 ) -> Result<(), Cycle> {
     // Add to reachable jobs immediately upon discovery
     reachable_jobs.insert(node.clone());
@@ -80,7 +83,14 @@ fn dfs(
                 path_set,
                 path_vec,
                 reachable_jobs,
+                reachable_job_deps,
             )?;
+
+            // Add the edge to the reachable job dependencies
+            reachable_job_deps
+                .entry(node.clone())
+                .or_default()
+                .insert(dep.clone());
 
             Ok::<(), Cycle>(())
         })?;

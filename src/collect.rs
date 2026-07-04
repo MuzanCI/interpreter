@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::Path;
 
@@ -14,7 +14,7 @@ use starlark::values::{FrozenHeapName, NoSerialize, StarlarkValue, Value, none::
 use starlark::{starlark_module, starlark_simple_value};
 use starlark_derive::starlark_value;
 
-use crate::{EvalContext, Job, JobDeps, JobId, Pipeline, PipelineId, Rule, Secret, Step, StepId};
+use crate::{EvalContext, Job, JobGraph, JobId, Pipeline, PipelineId, Rule, Secret, Step, StepId};
 
 pub type JobRegistry = HashMap<JobId, Job>;
 
@@ -26,7 +26,7 @@ pub type JobRegistry = HashMap<JobId, Job>;
 #[derive(Debug, Default, ProvidesStaticType)]
 pub struct Collector {
     pub job_registry: RefCell<JobRegistry>,
-    pub job_deps: RefCell<JobDeps>,
+    pub job_graph: RefCell<JobGraph>,
     pub pipelines: RefCell<Vec<Pipeline>>,
 }
 
@@ -174,48 +174,6 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         depends_on: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<JobVal> {
-        let mut steps_vec: Vec<Step> = Vec::new();
-        for item in steps.iterate(eval.heap())? {
-            let s = StepVal::from_value(item).ok_or_else(|| {
-                starlark::Error::new_other(anyhow::anyhow!(
-                    "Job.steps: expected Step, got {}",
-                    item.get_type()
-                ))
-            })?;
-            steps_vec.push(s.inner.clone());
-        }
-
-        let job_id = JobId::now_v7();
-
-        let mut job_deps = HashMap::new();
-        if !depends_on.is_none() {
-            for item in depends_on.iterate(eval.heap())? {
-                let job = JobVal::from_value(item).ok_or_else(|| {
-                    starlark::Error::new_other(anyhow::anyhow!(
-                        "Job.depends_on: expected Job, got {}",
-                        item.get_type()
-                    ))
-                })?;
-
-                job_deps
-                    .entry(job_id)
-                    .or_insert_with(Vec::new)
-                    .push(job.inner.job_id);
-            }
-        }
-
-        let name = if name.is_empty() {
-            format!("job-{}", job_id)
-        } else {
-            name.to_owned()
-        };
-
-        let job = Job {
-            job_id,
-            name,
-            steps: steps_vec,
-        };
-
         let collector = eval
             .extra
             .ok_or_else(|| {
@@ -225,10 +183,59 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
             .ok_or_else(|| {
                 starlark::Error::new_other(anyhow::anyhow!("eval.extra is not a Collector"))
             })?;
+
+        let steps = {
+            let mut steps_vec: Vec<Step> = Vec::new();
+            for item in steps.iterate(eval.heap())? {
+                let s = StepVal::from_value(item).ok_or_else(|| {
+                    starlark::Error::new_other(anyhow::anyhow!(
+                        "Job.steps: expected Step, got {}",
+                        item.get_type()
+                    ))
+                })?;
+                steps_vec.push(s.inner.clone());
+            }
+            steps_vec
+        };
+
+        let job = {
+            let job_id = JobId::now_v7();
+
+            let name = if name.is_empty() {
+                format!("job-{}", job_id)
+            } else {
+                name.to_owned()
+            };
+
+            Job {
+                job_id,
+                name,
+                steps,
+            }
+        };
+
         collector
             .job_registry
             .borrow_mut()
             .insert(job.job_id, job.clone());
+
+        let dep_job_ids = {
+            let mut dep_job_ids: HashSet<JobId> = HashSet::new();
+            if !depends_on.is_none() {
+                for item in depends_on.iterate(eval.heap())? {
+                    let j = JobVal::from_value(item).ok_or_else(|| {
+                        starlark::Error::new_other(anyhow::anyhow!(
+                            "Job.depends_on: expected Job, got {}",
+                            item.get_type()
+                        ))
+                    })?;
+                    dep_job_ids.insert(j.inner.job_id);
+                }
+            }
+            dep_job_ids
+        };
+        let mut job_graph = collector.job_graph.borrow_mut();
+        job_graph.insert(job.job_id, dep_job_ids);
 
         Ok(JobVal { inner: job })
     }
