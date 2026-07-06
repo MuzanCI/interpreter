@@ -10,11 +10,13 @@ use starlark::environment::{FrozenModule, Globals, GlobalsBuilder, Module};
 use starlark::eval::{Evaluator, ReturnFileLoader};
 use starlark::syntax::{AstModule, Dialect, DialectTypes};
 use starlark::values::list::UnpackList;
-use starlark::values::{FrozenHeapName, NoSerialize, StarlarkValue, Value, none::NoneType};
+use starlark::values::{FrozenHeapName, Heap, NoSerialize, StarlarkValue, Value, none::NoneType};
 use starlark::{starlark_module, starlark_simple_value};
 use starlark_derive::starlark_value;
 
-use crate::{EvalContext, Job, JobGraph, JobId, Pipeline, PipelineId, Rule, Secret, Step, StepId};
+use crate::{
+    EvalContext, Job, JobId, JobState, Need, Pipeline, PipelineId, Rule, Secret, Step, StepId,
+};
 
 pub type JobRegistry = HashMap<JobId, Job>;
 
@@ -26,7 +28,6 @@ pub type JobRegistry = HashMap<JobId, Job>;
 #[derive(Debug, Default, ProvidesStaticType)]
 pub struct Collector {
     pub job_registry: RefCell<JobRegistry>,
-    pub job_graph: RefCell<JobGraph>,
     pub pipelines: RefCell<Vec<Pipeline>>,
 }
 
@@ -90,7 +91,56 @@ impl fmt::Display for JobVal {
 starlark_simple_value!(JobVal);
 
 #[starlark_value(type = "Job")]
-impl<'v> StarlarkValue<'v> for JobVal {}
+impl<'v> StarlarkValue<'v> for JobVal {
+    fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
+        let state = match attribute {
+            "completed" => JobState::Completed,
+            "failed" => JobState::Failed,
+            "skipped" => JobState::Skipped,
+            _ => return None,
+        };
+        Some(heap.alloc(NeedVal {
+            inner: Need {
+                job_id: self.inner.job_id,
+                state,
+            },
+        }))
+    }
+
+    fn has_attr(&self, attribute: &str, _heap: Heap<'v>) -> bool {
+        matches!(attribute, "completed" | "failed" | "skipped")
+    }
+
+    fn dir_attr(&self) -> Vec<String> {
+        vec![
+            "completed".to_owned(),
+            "failed".to_owned(),
+            "skipped".to_owned(),
+        ]
+    }
+}
+
+/// A Starlark value that wraps a [`Need`].
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct NeedVal {
+    #[allocative(skip)]
+    inner: Need,
+}
+
+impl fmt::Display for NeedVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Need(job_id={}, state={:?})",
+            self.inner.job_id, self.inner.state
+        )
+    }
+}
+
+starlark_simple_value!(NeedVal);
+
+#[starlark_value(type = "Need")]
+impl<'v> StarlarkValue<'v> for NeedVal {}
 
 /// A Starlark value that wraps a [`Rule`].
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
@@ -171,7 +221,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         name: &str,
         #[starlark(require = named)]
         #[starlark(default = NoneType)]
-        depends_on: Value<'v>,
+        needs: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<JobVal> {
         let collector = eval
@@ -198,6 +248,29 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
             steps_vec
         };
 
+        let needs = {
+            let mut needs_set: HashSet<Need> = HashSet::new();
+            if !needs.is_none() {
+                for item in needs.iterate(eval.heap())? {
+                    if let Some(job) = JobVal::from_value(item) {
+                        needs_set.insert(Need {
+                            job_id: job.inner.job_id,
+                            state: JobState::Completed,
+                        });
+                    } else if let Some(need) = NeedVal::from_value(item) {
+                        needs_set.insert(need.inner);
+                    } else {
+                        return Err(starlark::Error::new_other(anyhow::anyhow!(
+                            "Job.needs: expected Need or Job, got {}",
+                            item.get_type()
+                        )));
+                    }
+                }
+            }
+
+            needs_set.into_iter().collect::<Vec<Need>>()
+        };
+
         let job = {
             let job_id = JobId::now_v7();
 
@@ -211,6 +284,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
                 job_id,
                 name,
                 steps,
+                needs,
             }
         };
 
@@ -218,24 +292,6 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
             .job_registry
             .borrow_mut()
             .insert(job.job_id, job.clone());
-
-        let dep_job_ids = {
-            let mut dep_job_ids: HashSet<JobId> = HashSet::new();
-            if !depends_on.is_none() {
-                for item in depends_on.iterate(eval.heap())? {
-                    let j = JobVal::from_value(item).ok_or_else(|| {
-                        starlark::Error::new_other(anyhow::anyhow!(
-                            "Job.depends_on: expected Job, got {}",
-                            item.get_type()
-                        ))
-                    })?;
-                    dep_job_ids.insert(j.inner.job_id);
-                }
-            }
-            dep_job_ids
-        };
-        let mut job_graph = collector.job_graph.borrow_mut();
-        job_graph.insert(job.job_id, dep_job_ids);
 
         Ok(JobVal { inner: job })
     }
@@ -298,7 +354,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
                 for item in targets.iterate(eval.heap())? {
                     let j = JobVal::from_value(item).ok_or_else(|| {
                         starlark::Error::new_other(anyhow::anyhow!(
-                            "Pipeline.depends_on: expected Job, got {}",
+                            "Pipeline.needs: expected Job, got {}",
                             item.get_type()
                         ))
                     })?;

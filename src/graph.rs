@@ -1,6 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::{JobGraph, JobId, Pipeline};
+use crate::{JobId, Need, Pipeline, collect::JobRegistry};
+
+/// A mapping from a JobId to the list of JobIds that the job depends on.
+/// Also known as a list adjacency list representation of a directed graph.
+pub type JobGraph = HashMap<JobId, HashSet<Need>>;
 
 /// A sequence of job IDs that form a cycle. The first and last job IDs are the same, indicating the start and end of the cycle.
 pub type Cycle = Vec<JobId>;
@@ -9,41 +13,38 @@ pub type Cycle = Vec<JobId>;
 /// If a cycle is detected, return the cycle as a list of job IDs.
 pub fn walk_targets(
     pipeline: Pipeline,
-    job_deps: JobGraph,
-) -> Result<(HashSet<JobId>, JobGraph), Cycle> {
+    job_registry: JobRegistry,
+) -> Result<HashSet<JobId>, Cycle> {
     let mut visited = HashSet::new();
     let mut path_set = HashSet::new();
     let mut path_vec = Vec::new();
 
     let mut reachable_jobs = HashSet::new();
-    let mut reachable_job_deps: JobGraph = HashMap::new();
 
     pipeline.targets.into_iter().try_for_each(|target| {
         dfs(
             target,
-            &job_deps,
+            &job_registry,
             &mut visited,
             &mut path_set,
             &mut path_vec,
             &mut reachable_jobs,
-            &mut reachable_job_deps,
         )?;
 
         Ok::<(), Cycle>(())
     })?;
 
-    Ok((reachable_jobs, reachable_job_deps))
+    Ok(reachable_jobs)
 }
 
 /// Helper recursive DFS function to traverse the graph and detect cycles.
 fn dfs(
     node: JobId,
-    graph: &JobGraph,
+    job_registry: &JobRegistry,
     visited: &mut HashSet<JobId>,
     path_set: &mut HashSet<JobId>,
     path_vec: &mut Vec<JobId>,
     reachable_jobs: &mut HashSet<JobId>,
-    reachable_job_deps: &mut JobGraph,
 ) -> Result<(), Cycle> {
     // Add to reachable jobs immediately upon discovery
     reachable_jobs.insert(node.clone());
@@ -73,24 +74,17 @@ fn dfs(
     path_vec.push(node.clone());
 
     // Traverse dependencies
-    if let Some(deps) = graph.get(&node) {
-        deps.into_iter().try_for_each(|dep| {
+    if let Some(needs) = job_registry.get(&node).map(|job| &job.needs) {
+        needs.into_iter().try_for_each(|need| {
             // Recurse into the dependency
             dfs(
-                dep.clone(),
-                graph,
+                need.job_id.clone(),
+                job_registry,
                 visited,
                 path_set,
                 path_vec,
                 reachable_jobs,
-                reachable_job_deps,
             )?;
-
-            // Add the edge to the reachable job dependencies
-            reachable_job_deps
-                .entry(node.clone())
-                .or_default()
-                .insert(dep.clone());
 
             Ok::<(), Cycle>(())
         })?;

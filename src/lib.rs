@@ -49,12 +49,27 @@ pub enum Rule {
 
 pub type JobId = uuid::Uuid;
 
+/// A dependency from one job to another job's state.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum JobState {
+    Completed,
+    Failed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct Need {
+    pub job_id: JobId,
+    pub state: JobState,
+}
+
 /// A sequence of steps that execute in an isolated sandbox.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Job {
     pub job_id: JobId,
     pub name: String,
     pub steps: Vec<Step>,
+    pub needs: Vec<Need>,
 }
 
 pub type PipelineId = uuid::Uuid;
@@ -67,10 +82,6 @@ pub struct Pipeline {
     pub when: Vec<Rule>,
     pub targets: Vec<JobId>,
 }
-
-/// A mapping from a JobId to the list of JobIds that the job depends on.
-/// Also known as a list adjacency list representation of a directed graph.
-pub type JobGraph = HashMap<JobId, HashSet<JobId>>;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -87,7 +98,6 @@ pub struct EvalContext {
 pub struct EvalResult {
     pub pipelines: Vec<Pipeline>,
     pub jobs: Vec<Job>,
-    pub job_graph: JobGraph,
 }
 
 pub struct Interpreter {
@@ -102,7 +112,7 @@ impl Interpreter {
 
     pub fn evaluate(&self, root: &Path) -> anyhow::Result<EvalResult> {
         // Evaluate the root file (including all `load`ed modules) and collect all pipeline, job definitions, and the job dependency graph.
-        let (pipelines, job_registry, job_graph) = {
+        let (pipelines, job_registry) = {
             let globals = GlobalsBuilder::standard()
                 .with(predefined_primitives)
                 .build();
@@ -112,10 +122,9 @@ impl Interpreter {
                 .with_context(|| format!("evaluating {}", root.display()))?;
 
             let job_registry = collector.job_registry.into_inner();
-            let job_graph = collector.job_graph.into_inner();
             let pipelines = collector.pipelines.into_inner();
 
-            (pipelines, job_registry, job_graph)
+            (pipelines, job_registry)
         };
 
         // Sanity check: assert that pipelines is consistent with job_registry.
@@ -133,31 +142,33 @@ impl Interpreter {
             Ok::<(), anyhow::Error>(())
         })?;
 
-        // Sanity check: assert that job_registry is consistent with job_graph.
-        job_graph.iter().try_for_each(|(job_id, deps)| {
-            if !job_registry.contains_key(job_id) {
-                anyhow::bail!("Job {} has dependencies but is not defined", job_id);
-            }
-            deps.iter().try_for_each(|dep| {
-                if !job_registry.contains_key(dep) {
-                    anyhow::bail!("Job {} has dependency {} that is not defined", job_id, dep);
-                }
-                Ok(())
-            })?;
-            Ok(())
-        })?;
+        // // Sanity check: assert that job_registry is consistent with job_graph.
+        // job_graph.iter().try_for_each(|(job_id, needs)| {
+        //     if !job_registry.contains_key(job_id) {
+        //         anyhow::bail!("Job {} has dependencies but is not defined", job_id);
+        //     }
+        //     needs.iter().try_for_each(|need| {
+        //         if !job_registry.contains_key(&need.job_id) {
+        //             anyhow::bail!(
+        //                 "Job {} has dependency {:?} whose job is not defined",
+        //                 job_id,
+        //                 need
+        //             );
+        //         }
+        //         Ok(())
+        //     })?;
+        //     Ok(())
+        // })?;
 
         // Prune jobs and job_graph to only include jobs reachable from the DAG
         // formed by the pipeline targets.
-        let (reachable_job_ids, reachable_job_graph) = {
+        let reachable_job_ids = {
             let mut reachable_job_ids = HashSet::new();
-            let mut reachable_job_graph = HashMap::new();
 
             pipelines.iter().try_for_each(|pipeline| {
-                match walk_targets(pipeline.clone(), job_graph.clone()) {
-                    Ok((job_ids, job_graph)) => {
+                match walk_targets(pipeline.clone(), job_registry.clone()) {
+                    Ok(job_ids) => {
                         reachable_job_ids.extend(job_ids);
-                        reachable_job_graph.extend(job_graph);
                         Ok(())
                     }
                     Err(cycle) => {
@@ -170,7 +181,7 @@ impl Interpreter {
                 }
             })?;
 
-            (reachable_job_ids, reachable_job_graph)
+            reachable_job_ids
         };
 
         let jobs = job_registry
@@ -179,12 +190,6 @@ impl Interpreter {
             .map(|(_, job)| job)
             .collect::<Vec<Job>>();
 
-        let job_graph = reachable_job_graph;
-
-        Ok(EvalResult {
-            pipelines,
-            jobs,
-            job_graph,
-        })
+        Ok(EvalResult { pipelines, jobs })
     }
 }

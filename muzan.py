@@ -75,7 +75,9 @@ build_job = Job(
 
 test_job = Job(
     name="test_job",
-    depends_on=[build_job],
+    needs=[
+        build_job,  # TODO: evaluate to Need(job_id, Completed)
+    ],
     steps=[
         download(
             source="s3://my-bucket/{}/my_binary".format(GIT_COMMIT),
@@ -88,6 +90,19 @@ test_job = Job(
         attest(
             glob="results.json",
             oidc_issuer="https://oidc.example.com",
+        ),
+    ],
+)
+
+clean_up_job = Job(
+    name="clean_up_job",
+    needs=[
+        test_job.failed,  # TODO: evaluate to Need(job_id, Failed)
+    ],
+    steps=[
+        Step(
+            name="clean up",
+            command="rm -rf target/release/my_binary",
         ),
     ],
 )
