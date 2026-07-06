@@ -348,24 +348,30 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         targets: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<NoneType> {
-        let targets_vec = {
-            let mut targets_vec = Vec::new();
+        let targets = {
+            let mut targets_set = HashSet::new();
             if !targets.is_none() {
                 for item in targets.iterate(eval.heap())? {
-                    let j = JobVal::from_value(item).ok_or_else(|| {
-                        starlark::Error::new_other(anyhow::anyhow!(
-                            "Pipeline.needs: expected Job, got {}",
+                    if let Some(job) = JobVal::from_value(item) {
+                        targets_set.insert(Need {
+                            job_id: job.inner.job_id,
+                            state: JobState::Completed,
+                        });
+                    } else if let Some(need) = NeedVal::from_value(item) {
+                        targets_set.insert(need.inner);
+                    } else {
+                        return Err(starlark::Error::new_other(anyhow::anyhow!(
+                            "Job.needs: expected Need or Job, got {}",
                             item.get_type()
-                        ))
-                    })?;
-                    targets_vec.push(j.inner.job_id);
+                        )));
+                    }
                 }
             }
-            targets_vec
+            targets_set.into_iter().collect::<Vec<Need>>()
         };
 
-        let rules_vec = {
-            let mut rules_vec: Vec<Rule> = Vec::new();
+        let when = {
+            let mut rules_set = HashSet::new();
             if !when.is_none() {
                 for item in when.iterate(eval.heap())? {
                     let r = RuleVal::from_value(item).ok_or_else(|| {
@@ -374,10 +380,10 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
                             item.get_type()
                         ))
                     })?;
-                    rules_vec.push(r.inner.clone());
+                    rules_set.insert(r.inner.clone());
                 }
             }
-            rules_vec
+            rules_set.into_iter().collect::<Vec<Rule>>()
         };
 
         let pipeline_id = PipelineId::now_v7();
@@ -391,8 +397,8 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         let pipeline = Pipeline {
             pipeline_id,
             name,
-            when: rules_vec,
-            targets: targets_vec,
+            when,
+            targets,
         };
 
         let collector = eval

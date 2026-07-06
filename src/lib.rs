@@ -29,7 +29,7 @@ pub struct Step {
 }
 
 /// A rule for when a pipeline should be created.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Rule {
     Push {
         include_branches: Option<Vec<String>>,
@@ -52,6 +52,9 @@ pub type JobId = uuid::Uuid;
 /// A dependency from one job to another job's state.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum JobState {
+    Created,
+    Ready,
+    Started,
     Completed,
     Failed,
     Skipped,
@@ -80,7 +83,7 @@ pub struct Pipeline {
     pub pipeline_id: PipelineId,
     pub name: String,
     pub when: Vec<Rule>,
-    pub targets: Vec<JobId>,
+    pub targets: Vec<Need>,
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -129,12 +132,12 @@ impl Interpreter {
 
         // Sanity check: assert that pipelines is consistent with job_registry.
         pipelines.iter().try_for_each(|pipeline| {
-            pipeline.targets.iter().try_for_each(|target_job_id| {
-                if !job_registry.contains_key(target_job_id) {
+            pipeline.targets.iter().try_for_each(|need| {
+                if !job_registry.contains_key(&need.job_id) {
                     anyhow::bail!(
-                        "Pipeline {} has target job {} that is not defined",
+                        "Pipeline [{}] has target need with job [{}] that is not defined",
                         pipeline.name,
-                        target_job_id
+                        need.job_id
                     );
                 }
                 Ok(())

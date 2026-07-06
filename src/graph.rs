@@ -21,9 +21,9 @@ pub fn walk_targets(
 
     let mut reachable_jobs = HashSet::new();
 
-    pipeline.targets.into_iter().try_for_each(|target| {
+    pipeline.targets.into_iter().try_for_each(|need| {
         dfs(
-            target,
+            need.job_id,
             &job_registry,
             &mut visited,
             &mut path_set,
