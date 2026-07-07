@@ -6,7 +6,13 @@ edition = "2024"
 [dependencies]
 allocative = "0.3.6"
 anyhow = "1.0.103"
+auth-git2 = "0.6.0"
 clap = { version = "4", features = ["derive"] }
+git2 = { version = "0.21.0", features = [
+    "https",
+    "vendored-libgit2",
+    "vendored-openssl",
+] }
 petgraph = "0.8.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

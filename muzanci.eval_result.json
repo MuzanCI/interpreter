@@ -1,0 +1,137 @@
+{
+  "pipelines": [
+    {
+      "pipeline_id": "019f3e73-1a5e-7821-b3a7-cfd25a4124e3",
+      "name": "release_x86_64",
+      "when": [
+        {
+          "Push": {
+            "include_branches": null,
+            "exclude_branches": null,
+            "include_tags": null,
+            "exclude_tags": null,
+            "include_paths": null,
+            "exclude_paths": null
+          }
+        }
+      ],
+      "targets": [
+        {
+          "job_id": "019f3e73-1a5d-7a53-a426-49a69f0adc87",
+          "state": "Completed"
+        },
+        {
+          "job_id": "019f3e73-1a5e-7821-b3a7-cf9aa399b02b",
+          "state": "Completed"
+        }
+      ]
+    },
+    {
+      "pipeline_id": "019f3e73-1a5e-7821-b3a7-cfefb0ef71bf",
+      "name": "release_arm64",
+      "when": [
+        {
+          "Push": {
+            "include_branches": null,
+            "exclude_branches": null,
+            "include_tags": null,
+            "exclude_tags": null,
+            "include_paths": null,
+            "exclude_paths": null
+          }
+        }
+      ],
+      "targets": [
+        {
+          "job_id": "019f3e73-1a5e-7821-b3a7-cf9aa399b02b",
+          "state": "Completed"
+        },
+        {
+          "job_id": "019f3e73-1a5d-7a53-a426-49a69f0adc87",
+          "state": "Completed"
+        }
+      ]
+    }
+  ],
+  "jobs": [
+    {
+      "job_id": "019f3e73-1a5e-7821-b3a7-cf9aa399b02b",
+      "name": "test_job",
+      "steps": [
+        {
+          "step_id": "019f3e73-1a5e-7821-b3a7-cf65c197c1f1",
+          "name": "download s3://my-bucket/62e23f12581dcd21d2fe57254aeed62b9afe1f54/my_binary ./my_binary",
+          "command": "aws s3 download s3://my-bucket/62e23f12581dcd21d2fe57254aeed62b9afe1f54/my_binary ./my_binary",
+          "secrets": []
+        },
+        {
+          "step_id": "019f3e73-1a5e-7821-b3a7-cf71f85b247d",
+          "name": "test",
+          "command": "./my_binary --test --output results.json",
+          "secrets": []
+        },
+        {
+          "step_id": "019f3e73-1a5e-7821-b3a7-cf8d09a5c415",
+          "name": "attest results.json https://oidc.example.com",
+          "command": "attest results.json https://oidc.example.com",
+          "secrets": []
+        }
+      ],
+      "needs": [
+        {
+          "job_id": "019f3e73-1a5e-7821-b3a7-cf5ed5eafbfe",
+          "state": "Completed"
+        }
+      ]
+    },
+    {
+      "job_id": "019f3e73-1a5e-7821-b3a7-cf5ed5eafbfe",
+      "name": "build_job",
+      "steps": [
+        {
+          "step_id": "019f3e73-1a5e-7821-b3a7-cf1400e2a4c7",
+          "name": "checkout https://github.com/MuzanCI/customer-repo.git main",
+          "command": "git clone --branch main https://github.com/MuzanCI/customer-repo.git .",
+          "secrets": []
+        },
+        {
+          "step_id": "019f3e73-1a5e-7821-b3a7-cf22cab5a813",
+          "name": "build",
+          "command": "cargo build --release",
+          "secrets": []
+        },
+        {
+          "step_id": "019f3e73-1a5e-7821-b3a7-cf3ab1079d5d",
+          "name": "attest target/release/my_binary https://oidc.example.com",
+          "command": "attest target/release/my_binary https://oidc.example.com",
+          "secrets": []
+        },
+        {
+          "step_id": "019f3e73-1a5e-7821-b3a7-cf41d7d8a3d5",
+          "name": "upload target/release/my_binary s3://my-bucket/62e23f12581dcd21d2fe57254aeed62b9afe1f54/my_binary",
+          "command": "aws s3 upload target/release/my_binary s3://my-bucket/62e23f12581dcd21d2fe57254aeed62b9afe1f54/my_binary",
+          "secrets": [
+            {
+              "name": "aws_secret",
+              "key": "AWS_SECRET_ACCESS_KEY"
+            }
+          ]
+        }
+      ],
+      "needs": []
+    },
+    {
+      "job_id": "019f3e73-1a5d-7a53-a426-49a69f0adc87",
+      "name": "external_job",
+      "steps": [
+        {
+          "step_id": "019f3e73-1a5d-7a53-a426-49965d82cf9d",
+          "name": "external_step",
+          "command": "echo 'Hello from external job!'",
+          "secrets": []
+        }
+      ],
+      "needs": []
+    }
+  ]
+}

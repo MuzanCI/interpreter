@@ -465,9 +465,9 @@ pub fn evaluate_file(
 
     let result = Module::with_temp_heap(|module| -> starlark::Result<FrozenModule> {
         let heap = module.heap();
-        module.set("GIT_REPO", heap.alloc(ctx.git_repo.as_str()));
         module.set("GIT_BRANCH", heap.alloc(ctx.git_branch.as_str()));
         module.set("GIT_COMMIT", heap.alloc(ctx.git_commit.as_str()));
+        module.set("GIT_CLONE_URL", heap.alloc(ctx.git_clone_url.as_str()));
 
         {
             let mut eval = Evaluator::new(&module);

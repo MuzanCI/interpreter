@@ -5,10 +5,12 @@ use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use starlark::environment::GlobalsBuilder;
 
-pub mod collect;
-pub mod graph;
 use crate::collect::{Collector, evaluate_file, predefined_primitives};
 use crate::graph::walk_targets;
+
+pub mod collect;
+pub mod git;
+pub mod graph;
 
 /// A secret to be injected into a step's environment variables.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -91,9 +93,9 @@ pub struct Pipeline {
 /// Context values injected as Starlark globals before evaluation.
 #[derive(Debug, Clone)]
 pub struct EvalContext {
-    pub git_repo: String,
     pub git_branch: String,
     pub git_commit: String,
+    pub git_clone_url: String,
 }
 
 /// Output of evaluating a root Starlark file.
@@ -144,24 +146,6 @@ impl Interpreter {
             })?;
             Ok::<(), anyhow::Error>(())
         })?;
-
-        // // Sanity check: assert that job_registry is consistent with job_graph.
-        // job_graph.iter().try_for_each(|(job_id, needs)| {
-        //     if !job_registry.contains_key(job_id) {
-        //         anyhow::bail!("Job {} has dependencies but is not defined", job_id);
-        //     }
-        //     needs.iter().try_for_each(|need| {
-        //         if !job_registry.contains_key(&need.job_id) {
-        //             anyhow::bail!(
-        //                 "Job {} has dependency {:?} whose job is not defined",
-        //                 job_id,
-        //                 need
-        //             );
-        //         }
-        //         Ok(())
-        //     })?;
-        //     Ok(())
-        // })?;
 
         // Prune jobs and job_graph to only include jobs reachable from the DAG
         // formed by the pipeline targets.

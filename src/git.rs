@@ -1,0 +1,183 @@
+use auth_git2::GitAuthenticator;
+use git2::{
+    Commit, FetchOptions, Oid, RemoteCallbacks, Repository,
+    build::{CheckoutBuilder, RepoBuilder},
+};
+use std::path::Path;
+
+pub struct GitClient {
+    git_config: git2::Config,
+    git_auth: GitAuthenticator,
+}
+
+impl GitClient {
+    pub fn new(git_config: git2::Config, git_auth: GitAuthenticator) -> Self {
+        Self {
+            git_config,
+            git_auth,
+        }
+    }
+
+    pub fn try_default() -> anyhow::Result<Self> {
+        let git_config = git2::Config::open_default()?;
+        let git_auth = GitAuthenticator::default();
+        Ok(Self {
+            git_config,
+            git_auth,
+        })
+    }
+
+    pub fn checkout_commit(
+        &self,
+        clone_url: &str,
+        branch: &str,
+        commit_sha: &str,
+        target_dir: &Path,
+    ) -> anyhow::Result<()> {
+        let repo = self.shallow_clone(clone_url, branch, target_dir)?;
+        let commit = self.find_commit(&repo, branch, commit_sha)?;
+
+        let mut checkout_builder = CheckoutBuilder::new();
+        checkout_builder.force();
+        repo.checkout_tree(commit.as_object(), Some(&mut checkout_builder))?;
+        repo.set_head_detached(commit.id())?;
+        Ok(())
+    }
+
+    fn shallow_clone(
+        &self,
+        clone_url: &str,
+        branch: &str,
+        target_dir: &Path,
+    ) -> anyhow::Result<Repository> {
+        let fetch_opts = {
+            let mut cbs = RemoteCallbacks::new();
+            cbs.credentials(self.git_auth.credentials(&self.git_config));
+
+            let mut fetch_opts = FetchOptions::new();
+            fetch_opts.remote_callbacks(cbs);
+            fetch_opts.depth(1);
+            fetch_opts
+        };
+        let mut repo_builder = RepoBuilder::new();
+        repo_builder.fetch_options(fetch_opts).branch(branch);
+
+        eprintln!(
+            "Shallow clone of branch [{}] from [{}]...",
+            branch, clone_url
+        );
+
+        let repo = repo_builder.clone(clone_url, target_dir)?;
+
+        eprintln!("Shallow clone success!");
+        Ok(repo)
+    }
+
+    fn find_commit<'a>(
+        &self,
+        repo: &'a Repository,
+        branch: &str,
+        commit_sha: &str,
+    ) -> anyhow::Result<Commit<'a>> {
+        let target_oid = Oid::from_str(commit_sha)?;
+        match repo.find_commit(target_oid) {
+            Ok(commit) => return Ok(commit),
+            Err(_) => {
+                eprintln!(
+                    "Local repository does not contain commit [{}] in branch [{}].",
+                    commit_sha, branch
+                );
+            }
+        };
+
+        eprintln!(
+            "Fetching commit object [{}] directly from remote for branch [{}]...",
+            commit_sha, branch
+        );
+        match self.fetch_commit_directly(repo, commit_sha) {
+            Ok(commit) => return Ok(commit),
+            Err(e) => {
+                eprintln!(
+                    "Failed to fetch commit [{}] directly from remote for branch [{}]: {:#}",
+                    commit_sha, branch, e
+                );
+            }
+        };
+
+        match self.fetch_commit_iteratively(repo, branch, commit_sha) {
+            Ok(commit) => return Ok(commit),
+            Err(e) => {
+                eprintln!(
+                    "Failed to fetch commit [{}] iteratively from remote for branch [{}]: {:#}",
+                    commit_sha, branch, e
+                );
+            }
+        };
+
+        anyhow::bail!(
+            "Failed to find commit [{}] in branch [{}].",
+            commit_sha,
+            branch
+        );
+    }
+
+    fn fetch_commit_directly<'a>(
+        &self,
+        repo: &'a Repository,
+        commit_sha: &str,
+    ) -> anyhow::Result<Commit<'a>> {
+        let mut remote = repo.find_remote("origin")?;
+
+        let mut fetch_opts = {
+            let mut cbs = RemoteCallbacks::new();
+            cbs.credentials(self.git_auth.credentials(&self.git_config));
+
+            let mut fetch_opts = FetchOptions::new();
+            fetch_opts.remote_callbacks(cbs);
+            fetch_opts.depth(1);
+            fetch_opts
+        };
+        remote.fetch(&[commit_sha], Some(&mut fetch_opts), None)?;
+
+        let target_oid = Oid::from_str(commit_sha)?;
+        let commit_object = repo.find_commit(target_oid)?;
+        Ok(commit_object)
+    }
+
+    fn fetch_commit_iteratively<'a>(
+        &self,
+        repo: &'a Repository,
+        branch: &str,
+        commit_sha: &str,
+    ) -> anyhow::Result<Commit<'a>> {
+        for i in 4..=10 {
+            let depth = 2i32.pow(i);
+            let mut fetch_opts = {
+                let mut cbs = RemoteCallbacks::new();
+                cbs.credentials(self.git_auth.credentials(&self.git_config));
+
+                let mut fetch_opts = FetchOptions::new();
+                fetch_opts.remote_callbacks(cbs);
+                fetch_opts.depth(depth);
+                fetch_opts
+            };
+            let mut remote = repo.find_remote("origin")?;
+            if let Err(e) = remote.fetch(&[commit_sha], Some(&mut fetch_opts), None) {
+                eprintln!(
+                    "Failed to fetch commit [{}] with depth [{}]: {:#}",
+                    commit_sha, depth, e
+                );
+            } else if let Ok(target_oid) = Oid::from_str(commit_sha) {
+                if let Ok(commit_object) = repo.find_commit(target_oid) {
+                    return Ok(commit_object);
+                }
+            }
+        }
+
+        anyhow::bail!(
+            "Failed to find commit [{}] in branch [{}] after iterative fetching.",
+            commit_sha,
+            branch
+        );
+    }
+}
