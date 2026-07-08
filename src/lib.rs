@@ -1,11 +1,14 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::Context as _;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 use starlark::environment::GlobalsBuilder;
 
-use crate::collect::{Collector, evaluate_file, predefined_primitives};
+use crate::collect::Collector;
+use crate::collect::evaluate_file;
+use crate::collect::predefined_primitives;
 use crate::graph::walk_targets;
 
 pub mod collect;
