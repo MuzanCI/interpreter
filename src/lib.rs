@@ -55,7 +55,18 @@ pub enum Rule {
 pub type JobId = uuid::Uuid;
 
 /// A dependency from one job to another job's state.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString,
+)]
 pub enum JobState {
     Created,
     Ready,
@@ -63,6 +74,21 @@ pub enum JobState {
     Completed,
     Failed,
     Skipped,
+}
+
+impl TryFrom<String> for JobState {
+    type Error = anyhow::Error;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        match s.as_str() {
+            "Created" => Ok(JobState::Created),
+            "Ready" => Ok(JobState::Ready),
+            "Started" => Ok(JobState::Started),
+            "Completed" => Ok(JobState::Completed),
+            "Failed" => Ok(JobState::Failed),
+            "Skipped" => Ok(JobState::Skipped),
+            _ => Err(anyhow::anyhow!("Invalid JobState string: {}", s)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
