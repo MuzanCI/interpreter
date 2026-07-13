@@ -1,9 +1,13 @@
 use auth_git2::GitAuthenticator;
-use git2::{
-    Commit, FetchOptions, Oid, RemoteCallbacks, Repository,
-    build::{CheckoutBuilder, RepoBuilder},
-};
+use git2::Commit;
+use git2::FetchOptions;
+use git2::Oid;
+use git2::RemoteCallbacks;
+use git2::Repository;
+use git2::build::CheckoutBuilder;
+use git2::build::RepoBuilder;
 use std::path::Path;
+use url::Url;
 
 pub struct GitClient {
     git_config: git2::Config,
@@ -29,12 +33,12 @@ impl GitClient {
 
     pub fn checkout_commit(
         &self,
-        clone_url: &str,
+        clone_url: &Url,
+        clone_target_dir: &Path,
         branch: &str,
         commit_sha: &str,
-        target_dir: &Path,
     ) -> anyhow::Result<()> {
-        let repo = self.shallow_clone(clone_url, branch, target_dir)?;
+        let repo = self.shallow_clone(clone_url, clone_target_dir, branch)?;
         let commit = self.find_commit(&repo, branch, commit_sha)?;
 
         let mut checkout_builder = CheckoutBuilder::new();
@@ -46,9 +50,9 @@ impl GitClient {
 
     fn shallow_clone(
         &self,
-        clone_url: &str,
+        clone_url: &Url,
+        clone_target_dir: &Path,
         branch: &str,
-        target_dir: &Path,
     ) -> anyhow::Result<Repository> {
         let fetch_opts = {
             let mut cbs = RemoteCallbacks::new();
@@ -67,7 +71,7 @@ impl GitClient {
             branch, clone_url
         );
 
-        let repo = repo_builder.clone(clone_url, target_dir)?;
+        let repo = repo_builder.clone(clone_url.as_str(), clone_target_dir)?;
 
         eprintln!("Shallow clone success!");
         Ok(repo)

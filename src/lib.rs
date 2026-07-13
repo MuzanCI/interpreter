@@ -1,10 +1,13 @@
 use std::collections::HashSet;
 use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::Context as _;
+use clap::Parser;
 use serde::Deserialize;
 use serde::Serialize;
 use starlark::environment::GlobalsBuilder;
+use url::Url;
 
 use crate::collect::Collector;
 use crate::collect::evaluate_file;
@@ -14,6 +17,38 @@ use crate::graph::walk_targets;
 pub mod collect;
 pub mod git;
 pub mod graph;
+
+/// MuzanCI pipeline interpreter.
+///
+/// Parses and evaluates a muzan.star configuration file, injecting the
+/// provided CI context globals, and prints the resulting pipelines as JSON.
+#[derive(Parser, Debug, Clone, Serialize, Deserialize)]
+#[command(version, about)]
+pub struct Args {
+    /// Path to read the root pipeline configuration file.
+    #[arg(default_value = "./external/customer-repo/muzan.py")]
+    pub root_file: PathBuf,
+
+    /// Git clone URL
+    #[arg(long, default_value = "https://github.com/MuzanCI/customer-repo.git")]
+    pub clone_url: Url,
+
+    /// Git clone target dir
+    #[arg(long, default_value = "./external/customer-repo")]
+    pub clone_target_dir: PathBuf,
+
+    /// Branch name
+    #[arg(long, default_value = "main")]
+    pub git_branch: String,
+
+    /// Commit SHA
+    #[arg(long, default_value = "62e23f12581dcd21d2fe57254aeed62b9afe1f54")]
+    pub git_commit: String,
+
+    #[arg(long, default_value = "./muzanci.eval_result.json")]
+    /// Path to write the output JSON.
+    pub output_file: PathBuf,
+}
 
 /// A secret to be injected into a step's environment variables.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
