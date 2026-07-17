@@ -2,6 +2,8 @@ use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
+use serde::Deserialize;
+use serde::Serialize;
 use std::path::PathBuf;
 use url::Url;
 
@@ -51,7 +53,7 @@ enum CliSubcommand {
     GitCloneShow(GitCloneShowArgs),
 }
 
-#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum ShowFormat {
     ASCII,
     JSON,
@@ -94,8 +96,8 @@ struct CheckArgs {
     env: Vec<(String, String)>,
 }
 
-#[derive(Args, Debug)]
-struct GitCloneShowArgs {
+#[derive(Args, Debug, Clone, Serialize, Deserialize)]
+pub struct GitCloneShowArgs {
     /// Git repository URL to clone
     #[arg(long, value_name = "URL")]
     url: Url,

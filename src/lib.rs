@@ -5,6 +5,7 @@ mod git;
 mod graph;
 
 pub use cli::CliCommand;
+pub use cli::GitCloneShowArgs;
 
 pub use config::Config;
 pub use config::JobConfig;
