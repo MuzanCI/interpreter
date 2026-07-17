@@ -33,26 +33,28 @@ impl GitClient {
 
     pub fn checkout_commit(
         &self,
-        clone_url: &Url,
-        clone_target_dir: &Path,
+        url: &Url,
         branch: &str,
+        target_dir: &Path,
         commit_sha: &str,
     ) -> anyhow::Result<()> {
-        let repo = self.shallow_clone(clone_url, clone_target_dir, branch)?;
+        let repo = self.shallow_clone(url, branch, target_dir)?;
         let commit = self.find_commit(&repo, branch, commit_sha)?;
 
         let mut checkout_builder = CheckoutBuilder::new();
         checkout_builder.force();
         repo.checkout_tree(commit.as_object(), Some(&mut checkout_builder))?;
+
         repo.set_head_detached(commit.id())?;
+
         Ok(())
     }
 
     fn shallow_clone(
         &self,
-        clone_url: &Url,
-        clone_target_dir: &Path,
+        url: &Url,
         branch: &str,
+        target_dir: &Path,
     ) -> anyhow::Result<Repository> {
         let fetch_opts = {
             let mut cbs = RemoteCallbacks::new();
@@ -63,15 +65,15 @@ impl GitClient {
             fetch_opts.depth(1);
             fetch_opts
         };
-        let mut repo_builder = RepoBuilder::new();
-        repo_builder.fetch_options(fetch_opts).branch(branch);
 
-        eprintln!(
-            "Shallow clone of branch [{}] from [{}]...",
-            branch, clone_url
-        );
+        let repo = {
+            let mut repo_builder = RepoBuilder::new();
+            repo_builder.fetch_options(fetch_opts).branch(branch);
 
-        let repo = repo_builder.clone(clone_url.as_str(), clone_target_dir)?;
+            eprintln!("Shallow clone of branch [{}] from [{}]...", branch, url);
+
+            repo_builder.clone(url.as_str(), target_dir)?
+        };
 
         eprintln!("Shallow clone success!");
         Ok(repo)
@@ -130,8 +132,6 @@ impl GitClient {
         repo: &'a Repository,
         commit_sha: &str,
     ) -> anyhow::Result<Commit<'a>> {
-        let mut remote = repo.find_remote("origin")?;
-
         let mut fetch_opts = {
             let mut cbs = RemoteCallbacks::new();
             cbs.credentials(self.git_auth.credentials(&self.git_config));
@@ -141,6 +141,8 @@ impl GitClient {
             fetch_opts.depth(1);
             fetch_opts
         };
+
+        let mut remote = repo.find_remote("origin")?;
         remote.fetch(&[commit_sha], Some(&mut fetch_opts), None)?;
 
         let target_oid = Oid::from_str(commit_sha)?;

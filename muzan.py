@@ -97,7 +97,7 @@ test_job = Job(
 clean_up_job = Job(
     name="clean_up_job",
     needs=[
-        test_job.failed,  # TODO: evaluate to Need(job_id, Failed)
+        test_job.failed,
     ],
     steps=[
         Step(
@@ -121,5 +121,5 @@ for arch in ["x86_64", "arm64"]:
         when=[
             Push(),
         ],
-        targets=[test_job, external_job],
+        needs=[test_job, external_job],
     )
