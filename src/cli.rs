@@ -54,7 +54,7 @@ enum CliSubcommand {
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum ShowFormat {
+pub enum ShowFormat {
     ASCII,
     JSON,
     DOTGRAPH,
@@ -100,30 +100,50 @@ struct CheckArgs {
 pub struct GitCloneShowArgs {
     /// Git repository URL to clone
     #[arg(long, value_name = "URL")]
-    url: Url,
+    pub url: Url,
 
     /// Branch to checkout
     #[arg(long, value_name = "BRANCH")]
-    branch: String,
+    pub branch: String,
 
     /// Specific commit SHA to checkout
     #[arg(long, value_name = "COMMIT_SHA")]
-    commit: String,
+    pub commit: String,
 
     /// Directory where the repository should be cloned
     #[arg(long, value_name = "PATH")]
-    target_dir: PathBuf,
+    pub target_dir: PathBuf,
 
     /// Path to the pipeline config file inside the cloned repo
     #[arg(long, value_name = "FILE")]
-    input: PathBuf,
+    pub input: PathBuf,
 
     /// Format to print the dependency graph in
     #[arg(long, value_enum, value_name = "FORMAT")]
-    format: ShowFormat,
+    pub format: ShowFormat,
 
     #[arg(long, value_parser = parse_key_val, action = clap::ArgAction::Append)]
-    env: Vec<(String, String)>,
+    pub env: Vec<(String, String)>,
+}
+
+impl Into<String> for GitCloneShowArgs {
+    fn into(self) -> String {
+        let mut s = format!(
+            "git-clone-show --url {} --branch {} --commit {} --target-dir {} --input {} --format {}",
+            self.url,
+            self.branch,
+            self.commit,
+            self.target_dir.display(),
+            self.input.display(),
+            self.format
+        );
+
+        self.env
+            .into_iter()
+            .for_each(|(k, v)| s.push_str(&format!(" --env {}={}", k, v)));
+
+        s
+    }
 }
 
 fn parse_key_val(s: &str) -> Result<(String, String), String> {

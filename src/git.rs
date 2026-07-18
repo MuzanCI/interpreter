@@ -9,6 +9,15 @@ use git2::build::RepoBuilder;
 use std::path::Path;
 use url::Url;
 
+/// A git branch name.
+pub type GitBranch = String;
+
+/// A git commit SHA.
+pub type GitCommitSha = String;
+
+/// A git tree SHA.
+pub type GitTreeSha = String;
+
 pub struct GitClient {
     git_config: git2::Config,
     git_auth: GitAuthenticator,
@@ -34,9 +43,9 @@ impl GitClient {
     pub fn checkout_commit(
         &self,
         url: &Url,
-        branch: &str,
+        branch: &GitBranch,
         target_dir: &Path,
-        commit_sha: &str,
+        commit_sha: &GitCommitSha,
     ) -> anyhow::Result<()> {
         let repo = self.shallow_clone(url, branch, target_dir)?;
         let commit = self.find_commit(&repo, branch, commit_sha)?;
@@ -53,7 +62,7 @@ impl GitClient {
     fn shallow_clone(
         &self,
         url: &Url,
-        branch: &str,
+        branch: &GitBranch,
         target_dir: &Path,
     ) -> anyhow::Result<Repository> {
         let fetch_opts = {
@@ -82,8 +91,8 @@ impl GitClient {
     fn find_commit<'a>(
         &self,
         repo: &'a Repository,
-        branch: &str,
-        commit_sha: &str,
+        branch: &GitBranch,
+        commit_sha: &GitCommitSha,
     ) -> anyhow::Result<Commit<'a>> {
         let target_oid = Oid::from_str(commit_sha)?;
         match repo.find_commit(target_oid) {
@@ -130,7 +139,7 @@ impl GitClient {
     fn fetch_commit_directly<'a>(
         &self,
         repo: &'a Repository,
-        commit_sha: &str,
+        commit_sha: &GitCommitSha,
     ) -> anyhow::Result<Commit<'a>> {
         let mut fetch_opts = {
             let mut cbs = RemoteCallbacks::new();
@@ -153,8 +162,8 @@ impl GitClient {
     fn fetch_commit_iteratively<'a>(
         &self,
         repo: &'a Repository,
-        branch: &str,
-        commit_sha: &str,
+        branch: &GitBranch,
+        commit_sha: &GitCommitSha,
     ) -> anyhow::Result<Commit<'a>> {
         for i in 4..=10 {
             let depth = 2i32.pow(i);
