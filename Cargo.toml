@@ -21,6 +21,7 @@ starlark_derive = "0.14.2"
 strum = { version = "0.28.0", features = ["derive"] }
 url = { version = "2.5.8", features = ["serde"] }
 uuid = { version = "1.23.4", features = ["serde", "v7"] }
+muzanci-image = { path = "../muzanci-image" }
 
 [lib]
 name = "muzanci_interpreter"
@@ -29,3 +30,8 @@ path = "src/lib.rs"
 [[bin]]
 name = "interpreter"
 path = "src/main.rs"
+
+[[test]]
+name = "pipeline_integration_test"
+path = "tests/pipeline_integration_test.rs"
+harness = false

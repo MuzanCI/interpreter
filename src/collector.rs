@@ -5,6 +5,8 @@ use std::fmt;
 use std::path::Path;
 
 use allocative::Allocative;
+use muzanci_image::image::ImagePlatform;
+use muzanci_image::image::ImagePlatformOs;
 use starlark::any::ProvidesStaticType;
 use starlark::environment::FrozenModule;
 use starlark::environment::Globals;
@@ -26,7 +28,11 @@ use starlark::values::list::UnpackList;
 use starlark::values::none::NoneType;
 use starlark_derive::starlark_value;
 
+use muzanci_image::image::ImagePlatformArchitecture;
+use muzanci_image::manifest_ref::ManifestRef;
+
 use crate::config::Config;
+use crate::config::ImageConfig;
 use crate::config::JobConfig;
 use crate::config::JobId;
 use crate::config::JobState;
@@ -223,6 +229,28 @@ impl TryInto<Config> for Collector {
     }
 }
 
+/// A Starlark value that wraps an [`Image`].
+#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
+struct ImageVal {
+    #[allocative(skip)]
+    inner: ImageConfig,
+}
+
+impl fmt::Display for ImageVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Image(ref={:?}, arch={:?}, os={:?})",
+            self.inner.manifest_ref, self.inner.platform.architecture, self.inner.platform.os
+        )
+    }
+}
+
+starlark_simple_value!(ImageVal);
+
+#[starlark_value(type = "Image")]
+impl<'v> StarlarkValue<'v> for ImageVal {}
+
 /// A Starlark value that wraps a [`Secret`].
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 struct SecretVal {
@@ -356,6 +384,43 @@ impl<'v> StarlarkValue<'v> for WhenVal {}
 /// pipeline configuration.
 #[starlark_module]
 pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
+    fn Image(
+        #[starlark(require = named)] r#ref: &str,
+        #[starlark(require = named)] arch: &str,
+        #[starlark(require = named)] os: &str,
+    ) -> starlark::Result<ImageVal> {
+        let manifest_ref = ManifestRef::try_from(r#ref)
+            .map_err(|e| starlark::Error::new_other(anyhow::anyhow!(e)))?;
+        let platform = ImagePlatform {
+            architecture: ImagePlatformArchitecture::from(arch),
+            os: ImagePlatformOs::from(os),
+        };
+        match platform.architecture {
+            ImagePlatformArchitecture::OTHER(arch) => {
+                return Err(starlark::Error::new_other(anyhow::anyhow!(
+                    "Unsupported architecture: {}",
+                    arch
+                )));
+            }
+            _ => {}
+        }
+        match platform.os {
+            ImagePlatformOs::OTHER(os) => {
+                return Err(starlark::Error::new_other(anyhow::anyhow!(
+                    "Unsupported OS: {}",
+                    os
+                )));
+            }
+            _ => {}
+        }
+        Ok(ImageVal {
+            inner: ImageConfig {
+                manifest_ref: manifest_ref,
+                platform: platform,
+            },
+        })
+    }
+
     fn Secret(
         #[starlark(require = named)] name: &str,
         #[starlark(require = named)] key: &str,
@@ -407,6 +472,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
     }
 
     fn Job<'v>(
+        #[starlark(require = named)] uses: Value<'v>,
         #[starlark(require = named)] steps: Value<'v>,
         #[starlark(require = named)]
         #[starlark(default = "")]
@@ -416,6 +482,16 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         needs: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<JobVal> {
+        let image = ImageVal::from_value(uses)
+            .ok_or_else(|| {
+                starlark::Error::new_other(anyhow::anyhow!(
+                    "Job.image: expected Image, got {}",
+                    uses.get_type()
+                ))
+            })?
+            .inner
+            .clone();
+
         let steps = {
             let mut steps_vec: Vec<StepConfig> = Vec::new();
             for item in steps.iterate(eval.heap())? {
@@ -467,6 +543,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
             JobConfig {
                 job_id,
                 name,
+                image,
                 steps,
                 needs,
             }

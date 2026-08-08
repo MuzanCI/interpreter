@@ -3,11 +3,21 @@ use std::path::Path;
 use serde::Deserialize;
 use serde::Serialize;
 
+use muzanci_image::image::ImagePlatform;
+use muzanci_image::manifest_ref::ManifestRef;
+
 use crate::collector::Collector;
 use crate::collector::Env;
 
+/// An image to be used as a base for a job.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ImageConfig {
+    pub manifest_ref: ManifestRef,
+    pub platform: ImagePlatform,
+}
+
 /// A secret to be injected into a step's environment variables.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SecretConfig {
     pub name: String,
     pub key: String,
@@ -93,6 +103,7 @@ pub struct NeedConfig {
 pub struct JobConfig {
     pub job_id: JobId,
     pub name: String,
+    pub image: ImageConfig,
     pub steps: Vec<StepConfig>,
     pub needs: Vec<NeedConfig>,
 }
