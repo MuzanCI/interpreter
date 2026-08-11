@@ -22,6 +22,7 @@ strum = { version = "0.28.0", features = ["derive"] }
 url = { version = "2.5.8", features = ["serde"] }
 uuid = { version = "1.23.4", features = ["serde", "v7"] }
 muzanci-image = { path = "../muzanci-image" }
+muzanci-git = { path = "../muzanci-git" }
 
 [lib]
 name = "muzanci_interpreter"

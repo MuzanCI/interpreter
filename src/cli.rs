@@ -9,7 +9,7 @@ use url::Url;
 
 use crate::collector::Env;
 use crate::config::Config;
-use crate::git::GitClient;
+use muzanci_git::GitClient;
 
 /// CLI tool to parse, check, and visualize pipeline configurations.
 #[derive(Parser, Debug)]

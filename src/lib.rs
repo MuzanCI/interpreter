@@ -1,7 +1,6 @@
 mod cli;
 mod collector;
 mod config;
-mod git;
 mod graph;
 
 pub use cli::CliCommand;
@@ -19,7 +18,3 @@ pub use config::SecretConfig;
 pub use config::StepConfig;
 pub use config::StepId;
 pub use config::WhenConfig;
-
-pub use git::GitBranch;
-pub use git::GitCommitSha;
-pub use git::GitTreeSha;
