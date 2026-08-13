@@ -1,7 +1,7 @@
 mod cli;
-mod collector;
-mod config;
-mod graph;
+pub mod collector;
+pub mod config;
+pub mod graph;
 
 pub use cli::CliCommand;
 pub use cli::GitCloneShowArgs;

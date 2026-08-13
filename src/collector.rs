@@ -80,6 +80,14 @@ impl Collector {
         }
     }
 
+    pub fn jobs(&self) -> Vec<JobConfig> {
+        self.job_registry
+            .borrow()
+            .iter()
+            .map(|(_job_id, job_config)| job_config.clone())
+            .collect()
+    }
+
     /// Evaluate one Starlark file, recursively resolving its load() statements.
     /// Each loaded module is frozen before being made available to its importer.
     pub fn evaluate(&self, path: &Path) -> anyhow::Result<FrozenModule> {
