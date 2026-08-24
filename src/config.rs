@@ -16,13 +16,6 @@ pub struct ImageConfig {
     pub platform: ImagePlatform,
 }
 
-/// A secret to be injected into a step's environment variables.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SecretConfig {
-    pub name: String,
-    pub key: String,
-}
-
 pub type StepId = uuid::Uuid;
 
 /// A step to be executed in a job sandbox.
@@ -31,7 +24,53 @@ pub struct StepConfig {
     pub step_id: StepId,
     pub name: String,
     pub command: String,
-    pub secrets: Vec<SecretConfig>,
+}
+
+pub type JobId = uuid::Uuid;
+
+/// A dependency from one job to another job's state.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::Display,
+    strum::EnumString
+)]
+pub enum JobStatus {
+    Completed,
+    Failed,
+}
+
+impl TryFrom<String> for JobStatus {
+    type Error = anyhow::Error;
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        match s.as_str() {
+            "Completed" => Ok(JobStatus::Completed),
+            "Failed" => Ok(JobStatus::Failed),
+            _ => Err(anyhow::anyhow!("Invalid JobStatus string: {}", s)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct NeedConfig {
+    pub job_id: JobId,
+    pub status: JobStatus,
+}
+
+/// A sequence of steps that execute in an isolated sandbox.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobConfig {
+    pub steps: Vec<StepConfig>,
+    pub name: String,
+    pub image: ImageConfig,
+    pub needs: Vec<NeedConfig>,
+    pub job_id: JobId,
 }
 
 /// A rule for when a pipeline should be created.
@@ -53,70 +92,15 @@ pub enum WhenConfig {
     },
 }
 
-pub type JobId = uuid::Uuid;
-
-/// A dependency from one job to another job's state.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    Eq,
-    Hash,
-    strum::Display,
-    strum::EnumString
-)]
-pub enum JobState {
-    Created,
-    Ready,
-    Started,
-    Completed,
-    Failed,
-    Skipped,
-}
-
-impl TryFrom<String> for JobState {
-    type Error = anyhow::Error;
-    fn try_from(s: String) -> Result<Self, Self::Error> {
-        match s.as_str() {
-            "Created" => Ok(JobState::Created),
-            "Ready" => Ok(JobState::Ready),
-            "Started" => Ok(JobState::Started),
-            "Completed" => Ok(JobState::Completed),
-            "Failed" => Ok(JobState::Failed),
-            "Skipped" => Ok(JobState::Skipped),
-            _ => Err(anyhow::anyhow!("Invalid JobState string: {}", s)),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct NeedConfig {
-    pub job_id: JobId,
-    pub state: JobState,
-}
-
-/// A sequence of steps that execute in an isolated sandbox.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct JobConfig {
-    pub job_id: JobId,
-    pub name: String,
-    pub image: ImageConfig,
-    pub steps: Vec<StepConfig>,
-    pub needs: Vec<NeedConfig>,
-}
-
 pub type PipelineId = uuid::Uuid;
 
 /// A set of target jobs and a set of rules for when the pipeline should be created.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
-    pub pipeline_id: PipelineId,
     pub name: String,
     pub when: Vec<WhenConfig>,
     pub needs: Vec<NeedConfig>,
+    pub pipeline_id: PipelineId,
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

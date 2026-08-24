@@ -35,11 +35,10 @@ use crate::config::Config;
 use crate::config::ImageConfig;
 use crate::config::JobConfig;
 use crate::config::JobId;
-use crate::config::JobState;
+use crate::config::JobStatus;
 use crate::config::NeedConfig;
 use crate::config::PipelineConfig;
 use crate::config::PipelineId;
-use crate::config::SecretConfig;
 use crate::config::StepConfig;
 use crate::config::StepId;
 use crate::config::WhenConfig;
@@ -259,28 +258,6 @@ starlark_simple_value!(ImageVal);
 #[starlark_value(type = "Image")]
 impl<'v> StarlarkValue<'v> for ImageVal {}
 
-/// A Starlark value that wraps a [`Secret`].
-#[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
-struct SecretVal {
-    #[allocative(skip)]
-    inner: SecretConfig,
-}
-
-impl fmt::Display for SecretVal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Secret(name={:?}, key={:?})",
-            self.inner.name, self.inner.key
-        )
-    }
-}
-
-starlark_simple_value!(SecretVal);
-
-#[starlark_value(type = "Secret")]
-impl<'v> StarlarkValue<'v> for SecretVal {}
-
 /// A Starlark value that wraps a [`Step`].
 #[derive(Debug, ProvidesStaticType, NoSerialize, Allocative)]
 struct StepVal {
@@ -321,16 +298,15 @@ starlark_simple_value!(JobVal);
 #[starlark_value(type = "Job")]
 impl<'v> StarlarkValue<'v> for JobVal {
     fn get_attr(&self, attribute: &str, heap: Heap<'v>) -> Option<Value<'v>> {
-        let state = match attribute {
-            "completed" => JobState::Completed,
-            "failed" => JobState::Failed,
-            "skipped" => JobState::Skipped,
+        let status = match attribute {
+            "completed" => JobStatus::Completed,
+            "failed" => JobStatus::Failed,
             _ => return None,
         };
         Some(heap.alloc(NeedVal {
             inner: NeedConfig {
                 job_id: self.inner.job_id,
-                state,
+                status,
             },
         }))
     }
@@ -359,8 +335,8 @@ impl fmt::Display for NeedVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Need(job_id={}, state={:?})",
-            self.inner.job_id, self.inner.state
+            "Need(job_id={}, status={:?})",
+            self.inner.job_id, self.inner.status,
         )
     }
 }
@@ -429,18 +405,6 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         })
     }
 
-    fn Secret(
-        #[starlark(require = named)] name: &str,
-        #[starlark(require = named)] key: &str,
-    ) -> starlark::Result<SecretVal> {
-        Ok(SecretVal {
-            inner: SecretConfig {
-                name: name.to_owned(),
-                key: key.to_owned(),
-            },
-        })
-    }
-
     fn Step<'v>(
         #[starlark(require = named)] command: &str,
         #[starlark(require = named)]
@@ -451,18 +415,6 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         secrets: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StepVal> {
-        let mut secrets_vec: Vec<SecretConfig> = Vec::new();
-        if !secrets.is_none() {
-            for item in secrets.iterate(eval.heap())? {
-                let s = SecretVal::from_value(item).ok_or_else(|| {
-                    starlark::Error::new_other(anyhow::anyhow!(
-                        "Step.secrets: expected Secret, got {}",
-                        item.get_type()
-                    ))
-                })?;
-                secrets_vec.push(s.inner.clone());
-            }
-        }
         let step_id = StepId::now_v7();
         let name = if name.is_empty() {
             format!("step-{}", step_id)
@@ -474,7 +426,6 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
                 step_id,
                 name: name,
                 command: command.to_owned(),
-                secrets: secrets_vec,
             },
         })
     }
@@ -521,7 +472,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
                     let need = if let Some(job) = JobVal::from_value(item) {
                         NeedConfig {
                             job_id: job.inner.job_id,
-                            state: JobState::Completed,
+                            status: JobStatus::Completed,
                         }
                     } else if let Some(need) = NeedVal::from_value(item) {
                         need.inner
@@ -629,7 +580,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
                     if let Some(job) = JobVal::from_value(item) {
                         needs_set.insert(NeedConfig {
                             job_id: job.inner.job_id,
-                            state: JobState::Completed,
+                            status: JobStatus::Completed,
                         });
                     } else if let Some(need) = NeedVal::from_value(item) {
                         needs_set.insert(need.inner);

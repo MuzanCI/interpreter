@@ -20,7 +20,6 @@ def upload(source, destination, secrets=[]):
     return Step(
         name="upload {} {}".format(source, destination),
         command="aws s3 upload {} {}".format(source, destination),
-        secrets=secrets,
     )
 
 
@@ -28,7 +27,6 @@ def download(source, destination, secrets=[]):
     return Step(
         name="download {} {}".format(source, destination),
         command="aws s3 download {} {}".format(source, destination),
-        secrets=secrets,
     )
 
 
@@ -37,18 +35,12 @@ def attest(glob, oidc_issuer, secrets=[]):
     return Step(
         name=command,
         command=command,
-        secrets=secrets,
     )
 
 
 # ------------------------------------------------------------------------------
 # Pipeline definition
 # ------------------------------------------------------------------------------
-
-aws_secret = Secret(
-    name="aws_secret",
-    key="AWS_SECRET_ACCESS_KEY",
-)
 
 build_job = Job(
     name="build_job",
@@ -68,7 +60,6 @@ build_job = Job(
         upload(
             source="target/release/my_binary",
             destination="s3://my-bucket/{}/my_binary".format(GIT_COMMIT),
-            secrets=[aws_secret],
         ),
     ],
 )
