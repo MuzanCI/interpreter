@@ -1,5 +1,5 @@
 [package]
-name = "muzanci-interpreter"
+name = "muzanci-config"
 version = "0.1.0"
 edition = "2024"
 
@@ -25,14 +25,5 @@ muzanci-image = { path = "../muzanci-image" }
 muzanci-git = { path = "../muzanci-git" }
 
 [lib]
-name = "muzanci_interpreter"
+name = "muzanci_config"
 path = "src/lib.rs"
-
-[[bin]]
-name = "interpreter"
-path = "src/main.rs"
-
-[[test]]
-name = "pipeline_integration_test"
-path = "tests/pipeline_integration_test.rs"
-harness = false

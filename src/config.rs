@@ -1,5 +1,10 @@
 use std::path::Path;
+use std::path::PathBuf;
 
+use muzanci_git::GitBranch;
+use muzanci_git::GitCloneUrl;
+use muzanci_git::GitCommitSha;
+use muzanci_git::GitRemote;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -42,8 +47,15 @@ pub type JobId = uuid::Uuid;
     strum::EnumString
 )]
 pub enum JobStatus {
+    Created,
+    Queued,
+    Started,
     Completed,
     Failed,
+    TimedOut,
+    CancelRequested,
+    Cancelled,
+    Skipped,
 }
 
 impl TryFrom<String> for JobStatus {
@@ -103,7 +115,26 @@ pub struct PipelineConfig {
     pub pipeline_id: PipelineId,
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckoutConfig {
+    pub url: GitCloneUrl,
+    pub branch: GitBranch,
+    pub commit_sha: GitCommitSha,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvaluationConfig {
+    pub checkout: CheckoutConfig,
+    pub input: PathBuf,
+}
+
+pub type DebugSessionId = uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugSessionConfig {
+    pub debug_session_id: DebugSessionId,
+    pub capacity: u64,
+}
 
 /// Output of evaluating a root Starlark file.
 #[derive(Debug, Clone, Serialize, Deserialize)]

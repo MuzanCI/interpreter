@@ -1,6 +1,6 @@
-# MuzanCI Interpreter
+# MuzanCI config
 
-An interpreter for the Python-like pipeline configuration language used by MuzanCI.
+An config for the Python-like pipeline configuration language used by MuzanCI.
 
 ## Config Example
 
@@ -38,7 +38,7 @@ my_pipeline = Pipeline(
 ## CLI Usage
 
 ```sh
-$ interpreter
+$ config
 ```
 
 Prints help information about the program.
@@ -46,7 +46,7 @@ Prints help information about the program.
 ---
 
 ```sh
-$ interpreter show
+$ config show
     --input FILE
     --format {ascii,json,dotgraph}
 ```
@@ -72,7 +72,7 @@ Parses the pipeline config and prints the dependency graph in the specified form
 ---
 
 ```sh
-$ interpreter check
+$ config check
     --input FILE
 ```
 
@@ -87,7 +87,7 @@ No cycles detected.
 ---
 
 ```sh
-$ interpreter git-clone
+$ config git-clone
     --url URL
     --branch BRANCH
     --commit COMMIT_SHA

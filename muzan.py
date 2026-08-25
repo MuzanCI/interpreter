@@ -1,7 +1,7 @@
 # muzan.star — MuzanCI pipeline configuration example.
 #
 # The primitives secret(), step(), job(), and pipeline() are provided by the
-# interpreter as Rust StarlarkValue globals.  This file shows how to compose
+# config as Rust StarlarkValue globals.  This file shows how to compose
 # them into a real CI workflow.
 
 # ------------------------------------------------------------------------------
@@ -46,7 +46,7 @@ build_job = Job(
     name="build_job",
     steps=[
         checkout(
-            repo=GIT_REPO,  # injected by the interpreter
+            repo=GIT_REPO,  # injected by the config
             branch=GIT_BRANCH,
         ),
         Step(
@@ -105,7 +105,7 @@ no_name_job = Job(
 load("external.py", "external_job")
 
 # pipeline() is called for its side effect: it registers the pipeline in the
-# interpreter's collector.  It does not need to be assigned to a variable.
+# config's collector.  It does not need to be assigned to a variable.
 for arch in ["x86_64", "arm64"]:
     Pipeline(
         name=f"release_{arch}",
