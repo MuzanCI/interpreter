@@ -1,6 +1,6 @@
-# muzan.star — MuzanCI pipeline configuration example.
+# muzan.py — MuzanCI pipeline configuration example.
 #
-# The primitives secret(), step(), job(), and pipeline() are provided by the
+# The primitives Step(), Job(), and Pipeline() are provided by the
 # config as Rust StarlarkValue globals.  This file shows how to compose
 # them into a real CI workflow.
 

@@ -413,7 +413,6 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         #[starlark(require = named)]
         #[starlark(default = NoneType)]
         uses: Value<'v>,
-        eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StepVal> {
         let step_id = StepId::now_v7();
 
@@ -449,11 +448,11 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
     }
 
     fn Job<'v>(
-        #[starlark(require = named)] uses: Value<'v>,
         #[starlark(require = named)] steps: Value<'v>,
         #[starlark(require = named)]
         #[starlark(default = "")]
         name: &str,
+        #[starlark(require = named)] uses: Value<'v>,
         #[starlark(require = named)]
         #[starlark(default = NoneType)]
         needs: Value<'v>,
