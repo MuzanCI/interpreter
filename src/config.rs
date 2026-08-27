@@ -1,8 +1,6 @@
 use std::path::Path;
 use std::path::PathBuf;
 
-use muzanci_git::GitBranch;
-use muzanci_git::GitCloneUrl;
 use muzanci_git::GitCommitSha;
 use muzanci_git::GitRemote;
 use serde::Deserialize;
@@ -29,6 +27,7 @@ pub struct StepConfig {
     pub step_id: StepId,
     pub name: String,
     pub command: String,
+    pub image: Option<ImageConfig>,
 }
 
 pub type JobId = uuid::Uuid;
@@ -116,24 +115,20 @@ pub struct PipelineConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CheckoutConfig {
-    pub url: GitCloneUrl,
-    pub branch: GitBranch,
+pub struct TriggerConfig {
+    pub remote: GitRemote,
     pub commit_sha: GitCommitSha,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvaluationConfig {
-    pub checkout: CheckoutConfig,
     pub input: PathBuf,
 }
 
 pub type DebugSessionId = uuid::Uuid;
 
+pub type ServerId = uuid::Uuid;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DebugSessionConfig {
+pub struct DebugClientConfig {
     pub debug_session_id: DebugSessionId,
-    pub capacity: u64,
+    pub server_id: ServerId,
 }
 
 /// Output of evaluating a root Starlark file.

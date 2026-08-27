@@ -412,20 +412,38 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         name: &str,
         #[starlark(require = named)]
         #[starlark(default = NoneType)]
-        secrets: Value<'v>,
+        uses: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> starlark::Result<StepVal> {
         let step_id = StepId::now_v7();
+
         let name = if name.is_empty() {
             format!("step-{}", step_id)
         } else {
             name.to_owned()
         };
+
+        let image = if uses.is_none() {
+            None
+        } else {
+            let image = ImageVal::from_value(uses)
+                .ok_or_else(|| {
+                    starlark::Error::new_other(anyhow::anyhow!(
+                        "Job.image: expected Image, got {}",
+                        uses.get_type()
+                    ))
+                })?
+                .inner
+                .clone();
+            Some(image)
+        };
+
         Ok(StepVal {
             inner: StepConfig {
                 step_id,
-                name: name,
+                name,
                 command: command.to_owned(),
+                image,
             },
         })
     }
