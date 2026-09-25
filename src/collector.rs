@@ -414,7 +414,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         #[starlark(default = NoneType)]
         uses: Value<'v>,
     ) -> starlark::Result<StepVal> {
-        let step_id = StepId::now_v7();
+        let step_id = StepId::new();
 
         let name = if name.is_empty() {
             format!("step-{}", step_id)
@@ -508,7 +508,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
         };
 
         let job = {
-            let job_id = JobId::now_v7();
+            let job_id = JobId::new();
 
             let name = if name.is_empty() {
                 format!("job-{}", job_id)
@@ -628,7 +628,7 @@ pub fn predefined_primitives(builder: &mut GlobalsBuilder) {
             when_set.into_iter().collect::<Vec<WhenConfig>>()
         };
 
-        let pipeline_id = PipelineId::now_v7();
+        let pipeline_id = PipelineId::new();
 
         let name = if name.is_empty() {
             format!("pipeline-{}", pipeline_id)
